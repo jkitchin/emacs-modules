@@ -1,0 +1,3 @@
+#+TITLE: Dynamic modules in Emacs
+
+This repo contains examples of creating dynamic modules for Emacs.
