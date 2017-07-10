@@ -1,9 +1,9 @@
-* Adding Linear algebra to Emacs with the GSL and dynamic modules
+* Adding linear algebra to Emacs with the GSL and dynamic modules
   :PROPERTIES:
   :categories: emacs,dynamic-module
   :END:
 
-The goal is to be able to solve https://www.gnu.org/software/gsl/doc/html/linalg.html#examples:
+The goal of this post is to be able to solve equations like this one:
 
 \[\left(\begin{array}{cccc}
  0.18& 0.60& 0.57& 0.96 \\
@@ -13,11 +13,11 @@ The goal is to be able to solve https://www.gnu.org/software/gsl/doc/html/linalg
 \left ( \begin{array}{c} x_0 \\ x_1 \\ x_2 \\ x_3 \end{array} \right )
 = \left ( \begin{array}{c} 1.0 \\ 2.0 \\ 3.0 \\ 4.0 \end{array} \right ) \]
 
-The answer is given as
+The answer is [[https://www.gnu.org/software/gsl/doc/html/linalg.html#examples:][given]] as
 
 \[x = \left ( \begin{array}{c} -4.05205 \\ -12.6056 \\ 1.66091 \\ 8.69377 \end{Array} \right ) \]
 
-The syntax we want to use is:
+The syntax we want to use is this, and we want it to return a vector containing the solution:
 
 #+BEGIN_SRC emacs-lisp
 (let ((A [[0.18 0.60 0.57 0.96]
@@ -28,7 +28,10 @@ The syntax we want to use is:
   (gsl-linalg-LU-solve A b))
 #+END_SRC
 
-The module can be found here: [[./gsl-linalg.c]]. There are a few notable features in it. First, I started writing some helper functions to make these modules simpler to write. For example, look how nice this looks to declare the functions and provide the feature.
+Rather than put all the code in here like I have for the past several posts, I started a git repo at https://github.com/jkitchin/emacs-modules that contains this code. 
+
+
+The module for this post can be found here: https://github.com/jkitchin/emacs-modules/blob/master/gsl-linalg.c. There are a few notable features in it. First, I started writing some helper functions to make these modules simpler to write. For example, look how nice this looks to declare the functions and provide the feature.
 
 #+BEGIN_SRC c
 int emacs_module_init(struct emacs_runtime *ert)
@@ -46,11 +49,17 @@ int emacs_module_init(struct emacs_runtime *ert)
 }
 #+END_SRC 
 
-For now I use these as a shared library defined in these files: [[./emacs-module-helpers.c]] and [[./emacs-module-helpers.h]]. You build the library with =make libemacs-module-helpers.so= using the [[./Makefile]].
+The DEFUN and provide function are defined in https://github.com/jkitchin/emacs-modules/blob/master/emacs-module-helpers.c.
 
 Within the module itself, we have to loop over the inputs to create the arrays that GSL wants to solve this problem. Second, after the solution is obtained, we have to build up a vector to return. The solution is in a gsl_vector, and we need to create an array of emacs_value elements containing each element of the gsl_vector as a float, and then create a vector to return to emacs. I use vectors here because it was easy to get the size of the b vector, which is also related to the size of the A matrix.
 
+Now, we can build this module with:
 
+#+BEGIN_SRC sh
+make gsl-linalg.so
+#+END_SRC
+
+Once it is compiled, we load it like this. In this post we are in the emacs-modules directory where the gsl-linalg.so library is, and it is not on my load-path, so I add it here.
 
 #+BEGIN_SRC emacs-lisp
 (add-to-list 'load-path (expand-file-name "."))
@@ -59,6 +68,8 @@ Within the module itself, we have to loop over the inputs to create the arrays t
 
 #+RESULTS:
 : gsl-linalg
+
+Now, we can solve linear equations like this:
 
 #+BEGIN_SRC emacs-lisp
 (gsl-linalg-LU-solve
@@ -71,3 +82,20 @@ Within the module itself, we have to loop over the inputs to create the arrays t
 
 #+RESULTS:
 : [-4.052050229573973 -12.605611395906903 1.6609116267088417 8.693766928795227]
+
+#+BEGIN_SRC emacs-lisp
+(describe-function 'gsl-linalg-LU-solve)
+#+END_SRC
+
+#+RESULTS:
+: gsl-linalg-LU-solve is a Lisp function.
+: 
+: (gsl-linalg-LU-solve &rest ARGS)
+: 
+: For more information check the manuals.
+: 
+: (gsl-linalg-LU-solve A b).
+: Solve A x = b for x.
+: Returns a vector containing the solution x.
+
+There are some limitations I don't yet know how to get around. One is you have to use vectors for the arguments. You cannot use a list. Second, every element of the vectors has to be a float. You cannot use an integer anywhere; if you do Emacs will segfault.
