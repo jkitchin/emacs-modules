@@ -16,6 +16,10 @@ gsl-linalg.so: gsl-linalg.o libemacs-module-helpers.so
 gsl-linalg.o: gsl-linalg.c
 	gcc -Wall -I/usr/local/include -fPIC -c gsl-linalg.c
 
+test-linalg: gsl-linalg.so
+	emacs -batch -q -l tests.el -f test-linalg
+
+
 all: libemacs-module-helpers.so gsl-constants.so gsl-linalg.so
 
 clean:
