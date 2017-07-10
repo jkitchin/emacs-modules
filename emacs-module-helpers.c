@@ -16,11 +16,11 @@ void defconst (emacs_env *env, const char *name, double value, const char *doc)
 
   // make a list of (defconst sym val doc)
   emacs_value largs[] = {fdefconst, sym, val, sdoc};
-  emacs_value qlist = env->funcall(env, list, 4, &largs);   
+  emacs_value qlist = env->funcall(env, list, 4, largs);   
 
   // now eval the list of symbols
   emacs_value args[] = { qlist };  
-  env->funcall(env, eval, 1, &args);
+  env->funcall(env, eval, 1, args);
 }
 
 void bind_function (emacs_env *env, const char *name, emacs_value Sfun)
