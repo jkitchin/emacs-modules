@@ -19,6 +19,11 @@ gsl-linalg.o: gsl-linalg.c
 test-linalg: gsl-linalg.so
 	emacs -batch -q -l tests.el -f test-linalg
 
+test-constants: gsl-constants.so
+	emacs -batch -q -l tests.el -f test-constants
+
+test: test-constants test-linalg
+
 
 all: libemacs-module-helpers.so gsl-constants.so gsl-linalg.so
 
