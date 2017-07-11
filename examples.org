@@ -1,6 +1,11 @@
-* Adding linear algebra to Emacs with the GSL and dynamic modules
+* DONE Adding linear algebra to Emacs with the GSL and dynamic modules
+  CLOSED: [2017-07-11 Tue 10:27]
   :PROPERTIES:
   :categories: emacs,dynamic-module
+  :date:     2017/07/11 10:27:13
+  :updated:  2017/07/11 10:27:13
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/index.html
   :END:
 
 The goal of this post is to be able to solve equations like this one:
