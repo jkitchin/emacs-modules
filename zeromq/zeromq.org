@@ -1,0 +1,31 @@
+* Zeromq bindings for Emacs via dynamic modules
+
+Finally, we get to the real reason I started playing around with dynamic modules: [[http://zguide.zeromq.org/][zeromq]]. Zeromq is a messaging library that [[http://jupyter-client.readthedocs.io/en/latest/messaging.html][Jupyter]] uses to communicate with kernels. I thought we might get a smoother integration with Emacs and Jupyter if we could use zeromq directly. Currently we have to run a web server that does the communication for us. We won't solve the Jupyter problem today, but we will look at communicating with a Zeromq server from Emacs.
+
+This might have lots of other useful applications. Suppose Emacs could communicate directly with other zeromq servers to retrieve data from. It might even be possible for Emacs to run its own zeromq server, and other instances of Emacs could then communicate with it. Collaborative editing anyone?
+
+Here we just implement the "Hello world" example in the [[http://zguide.zeromq.org/page:all#Ask-and-Ye-Shall-Receive][zeromq guide]]. The slightly altered server code is here: [[./hwserver.c]]. All it does is receive a string, and then send a response (in this case just the string "World"). 
+
+We wrap the client code into a dynamic module that exposes one function =zmq-send-and-recv= which takes one argument that is a string. This function creates client, connects to the server, sends the string, and receives the response. A real zeromq API would break this up
+
+#+BEGIN_SRC emacs-lisp :results value
+(add-to-list 'load-path (expand-file-name "."))
+(require 'mod-zmq)
+
+(zmq-send-and-recv "Hello")
+#+END_SRC
+
+#+RESULTS:
+: test
+
+Ideally, we might have a elisp code like this for the client. That will take a lot more work one day!
+
+#+BEGIN_SRC emacs-lisp
+(let* ((context (zmq-ctx-new))
+       (requestor (zmq-socket context ZMQ-REQ)))
+  (zmq-connect requestor "tcp://localhost:5555")
+  (zmq-send "Hello")
+  (zmq-recv)
+  (zmq-close requestor)
+  (zmq-ctx-destroy context))
+#+END_SRC
