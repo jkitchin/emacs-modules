@@ -99,3 +99,209 @@ Now, we can solve linear equations like this:
 : Returns a vector containing the solution x.
 
 There are some limitations I don't yet know how to get around. One is you have to use vectors for the arguments. You cannot use a list. Second, every element of the vectors has to be a float. You cannot use an integer anywhere; if you do Emacs will segfault.
+
+* A GSL root finder in a dynamic module
+  :PROPERTIES:
+  :categories: emacs,dynamic-module
+  :END:
+
+In a previous [[http://kitchingroup.cheme.cmu.edu/blog/2017/05/21/A-partial-symbolic-numeric-solver-in-emacs-lisp/][post]] I implemented a Newton solver in elisp to solve some problems numerically. Today, we continue the dynamic module studies and implement a bracketed root solver from the GNU Scientific Library (https://www.gnu.org/software/gsl/doc/html/roots.html#examples). I will implement the Brent solver here, which is a bracketed root finder: You specify a bracket that contains the root, and the software automatically finds it. It isn't my favorite solver, I prefer a single initial guess, but this one was easier to implement for now, and the root polishing algorithms in GSL seem to all require the function and derivatives, which I did not want to get into now. 
+
+The elisp signature I want to solve an equation $f(x; params) = 0$ is to following.
+
+#+BEGIN_SRC emacs-lisp
+(gsl-root-fsolver-brent f xlo xhi &optional params epsabs epsrel)
+#+END_SRC
+
+So, here it is in action.
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path (expand-file-name "."))
+(require 'gsl-roots)
+#+END_SRC
+
+#+RESULTS:
+: gsl-roots
+
+Here is a simple equation $f(x; params) = x^2 - 5 = 0$. The solution should be $\sqrt(5)$
+
+#+BEGIN_SRC emacs-lisp
+(gsl-root-fsolver-brent (lambda (x params) (- (* x x) 5)) 0.0 5.0)
+#+END_SRC
+
+#+RESULTS:
+: 2.2360634081902244
+
+For comparison:
+
+#+BEGIN_SRC emacs-lisp
+(sqrt 5)
+#+END_SRC
+
+#+RESULTS:
+: 2.23606797749979
+
+These differ in about the 5th decimal place. If we lower the relative error (the default is only 1e-3), we get quantitative agreement with the analytical solution.
+
+#+BEGIN_SRC emacs-lisp
+(gsl-root-fsolver-brent (lambda (x params) (- (* x x) 5)) 0.0 5.0 nil nil 1e-6)
+#+END_SRC
+
+#+RESULTS:
+: 2.23606797749979
+
+* List/vector functions
+
+This module
+#+BEGIN_SRC c :tangle mod-vector.c
+#include "emacs-module.h"
+#include <stdlib.h>
+
+/* Declare mandatory GPL symbol.  */
+int plugin_is_GPL_compatible;
+
+/* Bind NAME to FUN.  */
+static void bind_function (emacs_env *env, const char *name, emacs_value Sfun)
+{
+  /* Set the function cell of the symbol named NAME to SFUN using
+     the 'fset' function.  */
+
+  /* Convert the strings to symbols by interning them */
+  emacs_value Qfset = env->intern (env, "fset");
+  emacs_value Qsym = env->intern (env, name);
+
+  /* Prepare the arguments array */
+  emacs_value args[] = { Qsym, Sfun };
+
+  /* Make the call (2 == nb of arguments) */
+  env->funcall (env, Qfset, 2, args);
+}
+
+/* Provide FEATURE to Emacs.  */
+static void
+provide (emacs_env *env, const char *feature)
+{
+  /* call 'provide' with FEATURE converted to a symbol */
+
+  emacs_value Qfeat = env->intern (env, feature);
+  emacs_value Qprovide = env->intern (env, "provide");
+  emacs_value args[] = { Qfeat };
+
+  env->funcall (env, Qprovide, 1, args);
+}
+
+/*                                                                  */
+
+// This just returns the argument, works for a list.
+static emacs_value Ff1 (emacs_env *env, int nargs, emacs_value args[], void *data)
+{
+  return args[0];
+}
+
+// get first element of a vector
+static emacs_value Ff2 (emacs_env *env, int nargs, emacs_value args[], void *data)
+{
+  return env->vec_get(env, args[0], 0);
+}
+
+// This just returns a vector of integers!!!
+static emacs_value Ff3 (emacs_env *env, int nargs, emacs_value args[], void *data)
+{
+ int len = 2;
+ emacs_value *array = malloc(sizeof(emacs_value) * len);
+ array[0] = env->make_integer(env, 2);
+ array[1] = env->make_integer(env, 4);
+
+ emacs_value Fvector = env->intern(env, "vector");
+ emacs_value vec = env->funcall(env, Fvector, len, array);
+ free(array);
+ return vec;
+}
+
+// return vector * n
+static emacs_value Ff4 (emacs_env *env, int nargs, emacs_value args[], void *data)
+{
+ emacs_value input = args[0];
+ double N = env->extract_float(env, args[1]);
+
+ int len = env->vec_size (env, input);
+
+ emacs_value *array = malloc(sizeof(emacs_value) * len);
+
+ // multiply each value by N
+ for (ptrdiff_t i = 0; i < len; i++)
+   {
+     array[i] = env->make_float(env,
+				N * env->extract_float(env,
+						       env->vec_get (env, input, i)));
+   }
+
+ // If you change this to list, you get a list instead!
+ emacs_value Fvector = env->intern(env, "vector");
+ emacs_value vec = env->funcall(env, Fvector, len, array);
+ free(array);
+ return vec;
+}
+
+// return 2nd element of vector
+static emacs_value Ff5 (emacs_env *env, int nargs, emacs_value args[], void *data)
+{
+ emacs_value vec = args[0];
+
+ return env->vec_get (env, vec, 1);
+}
+
+// get second value of second vector
+static emacs_value Ff6 (emacs_env *env, int nargs, emacs_value args[], void *data)
+{
+ emacs_value vec = args[0];
+ emacs_value v2 = env->vec_get (env, vec, 1);
+ return env->vec_get (env, v2, 1);
+}
+
+// index a list
+static emacs_value Ff7 (emacs_env *env, int nargs, emacs_value args[], void *data)
+{
+ emacs_value nth = env->intern(env, "nth");
+
+ return env->funcall (env, nth, 2, args);
+}
+
+int emacs_module_init (struct emacs_runtime *ert)
+{
+  emacs_env *env = ert->get_environment (ert);
+
+#define DEFUN(lsym, csym, amin, amax, doc, data) \
+  bind_function (env, lsym, \
+		 env->make_function (env, amin, amax, csym, doc, data))
+
+  DEFUN("f1", Ff1, 1, 1, NULL, NULL);
+  DEFUN("f2", Ff2, 1, 1, NULL, NULL);
+  DEFUN("f3", Ff3, 0, 0, NULL, NULL);
+  DEFUN("f4", Ff4, 2, 2, NULL, NULL);
+  DEFUN("f5", Ff5, 1, 1, NULL, NULL);
+  DEFUN("f6", Ff6, 1, 1, NULL, NULL);
+  DEFUN("f7", Ff7, 2, 2, NULL, NULL);
+
+  provide (env, "mod-vector");
+
+  /* loaded successfully */
+  return 0;
+}
+#+END_SRC
+
+#+NAME: build
+#+BEGIN_SRC sh :var data=""
+rm -f mod-vector.so mod-vector.o
+gcc -Wall -I/usr/local/include -fPIC -c mod-vector.c
+gcc  -shared -L/usr/local/include -lgsl -o mod-vector.so mod-vector.o
+#+END_SRC
+
+#+RESULTS: build
+
+#+BEGIN_SRC emacs-lisp :post build(data=*this*)
+(org-babel-tangle)
+#+END_SRC
+
+#+RESULTS:
+: nil
