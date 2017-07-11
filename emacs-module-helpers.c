@@ -32,13 +32,34 @@ int extract_integer (emacs_env *env, emacs_value arg)
   return result;
 }
 
+void defconsti (emacs_env *env, const char *name, int value, const char *doc)
+{
+  // These are functions we will call
+  emacs_value eval = env->intern(env, "eval");  
+  emacs_value list = env->intern(env, "list");
+
+  // These will make up the list we will eventually eval
+  emacs_value fdefconst = env->intern(env, "defconst");
+  emacs_value sym = env->intern(env, name);
+  emacs_value val = env->make_integer(env, value);
+  emacs_value sdoc = env->make_string(env, doc, strlen(doc));
+
+  // make a list of (defconst sym val doc)
+  emacs_value largs[] = {fdefconst, sym, val, sdoc};
+  emacs_value qlist = env->funcall(env, list, 4, largs);   
+
+  // now eval the list of symbols
+  emacs_value args[] = { qlist };  
+  env->funcall(env, eval, 1, args);
+}
+
 void defconst (emacs_env *env, const char *name, double value, const char *doc)
 {
   // These are functions we will call
   emacs_value eval = env->intern(env, "eval");  
   emacs_value list = env->intern(env, "list");
 
-  // These will make up the list we will eventally eval
+  // These will make up the list we will eventually eval
   emacs_value fdefconst = env->intern(env, "defconst");
   emacs_value sym = env->intern(env, name);
   emacs_value val = env->make_float(env, value);

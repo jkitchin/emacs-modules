@@ -3,6 +3,7 @@
 #ifndef EMACS_MODULE_HELPERS_H_
 #define EMACS_MODULE_HELPERS_H_
 
+void defconsti (emacs_env *env, const char *name, int value, const char *doc);
 void defconst (emacs_env *env, const char *name, double value, const char *doc);
 
 double extract_double (emacs_env *env, emacs_value arg);
