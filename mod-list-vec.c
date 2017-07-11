@@ -83,19 +83,13 @@ static emacs_value Ff4a (emacs_env *env, int nargs, emacs_value args[], void *da
 	  array[i] = env->make_float(env, N * j);
 	}
 
-      emacs_value list = env->intern(env, "list");
-      emacs_value L = env->funcall(env, list, len, array);
-      free(array);
-      return L;
     } else if (env->eq(env, type, env->intern(env, "vector")))
     {
       for (int i = 0; i < len; i++)
 	{
-	  array[i] = env->make_float(env,
-				     N * extract_double(env,
-							env->vec_get (env, args[0], i)));
+	  double j = extract_double(env, env->vec_get (env, args[0], i));
+	  array[i] = env->make_float(env, N * j);
 	  }
-      // If you change this to list, you get a list instead!
     }
   
  emacs_value list = env->intern(env, "list");
