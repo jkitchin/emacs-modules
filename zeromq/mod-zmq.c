@@ -7,81 +7,175 @@
 #include <wchar.h>
 int plugin_is_GPL_compatible;
 
-// (zmq-send-and-recv msg) -> returns what is received
-static emacs_value zmq_send_and_recv (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+static emacs_value Fzmq_ctx_new (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
 {
-  emacs_value msg = args[0];
-
-  // first we copy our string out of emacs and into a char array
-  ptrdiff_t size = 0;
-  // The first one will fail and write the length of the variable to size
-  env->copy_string_contents(env, msg, NULL, &size);
-
-  // Now we know the size and can do the copy
-  char *str = malloc(size);
-  env->copy_string_contents(env, msg, str, &size);
-
-  // Now we connect and send.
   void *context = zmq_ctx_new ();
-  void *requester = zmq_socket (context, ZMQ_REQ);
-
-  // TODO: we need a user pointer maybe to create this.
-  zmq_connect (requester, "tcp://localhost:5555");
-  
-  zmq_send (requester, str, strlen(str), 0);
-  free(str);
-
-  // TODO: need a way to know how big we will receive.
-  char cbuffer [10];
-  zmq_recv (requester, cbuffer, 20, 0);
-
-  printf("Got %s back (%d chars).\n", cbuffer, strlen(cbuffer));
-
-  wchar_t *hello_world = (char*)malloc(strlen(cbuffer) * sizeof(wchar_t*));
-// Prints "Hello world!" on hello_world
-  sprintf(hello_world, "%s", cbuffer);
-
-  printf("hw contains %s (%d chars, %d wchars)\n", hello_world, strlen(hello_world), wcslen(hello_world));
-  
-  emacs_value result = env->make_string(env, hello_world, strlen(hello_world));
-  zmq_close (requester);
-  zmq_ctx_destroy (context);
-
-  return result;
+  return env->make_user_ptr(env,
+			    NULL, // the finalizer func?
+			    context);
 }
 
-// This is a test to get a string back. It works fine.
-static emacs_value stest (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+// http://api.zeromq.org/4-2:zmq-ctx-destroy
+// int zmq_ctx_destroy (void *context);
+// (zmq-ctx-destroy context)
+static emacs_value Fzmq_ctx_destroy (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
 {
-  emacs_value msg = args[0];
+  intptr_t context = env->get_user_ptr(env, args[0]);
+  int result = zmq_ctx_destroy (context);
+  return env->make_integer(env, result);
+}
+
+
+// http://api.zeromq.org/4-2:zmq-socket
+// void *zmq_socket (void *context, int type);
+//(zmq-socket context ZMQ_REQ)
+static emacs_value Fzmq_socket (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+
+  intptr_t context = env->get_user_ptr(env, args[0]);
+  int type = env->extract_integer(env, args[1]);
+  void *socket = zmq_socket (context, type);
+  return env->make_user_ptr(env,
+			    NULL, // the finalizer func?
+			    socket);
+}
+
+// http://api.zeromq.org/4-2:zmq-close
+// int zmq_close (void *socket);
+// (zmq-close socket)
+static emacs_value Fzmq_close (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  intptr_t socket = env->get_user_ptr(env, args[0]);
+  int result = zmq_close (socket);
+  return env->make_integer(env, result);
+}
+
+
+// http://api.zeromq.org/4-2:zmq-connect
+// int zmq_connect (void *socket, const char *endpoint);
+// (zmq-connect socket endpoint)
+static emacs_value Fzmq_connect (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  intptr_t socket = env->get_user_ptr(env, args[0]);
+  emacs_value endpoint = args[1];
+  
   ptrdiff_t size = 0;
   // The first one will fail and write the length of the variable to size
-  env->copy_string_contents(env, msg, NULL, &size);
+  env->copy_string_contents(env, endpoint, NULL, &size);
 
   // Now we know the size and can do the copy
-  char *str = malloc(size);
-  env->copy_string_contents(env, msg, str, &size);
+  char *endpoint_str = malloc(size);
+  env->copy_string_contents(env, endpoint, endpoint_str, &size);
 
-  char *hello_world = (char*)malloc(12 * sizeof(char));
-// Prints "Hello world!" on hello_world
-  sprintf(hello_world, "Hello %s!", str);
-  
-  emacs_value result = env->make_string(env, hello_world, strlen(hello_world));
-  
-  return result;
-
+  int result = zmq_connect (socket, endpoint_str);
+  free(endpoint_str);
+  return env->make_integer(env, result);
 }
+
+// http://api.zeromq.org/4-2:zmq-send
+// int zmq_send (void *socket, void *buf, size_t len, int flags);
+// (zmq-send socket buf flag)
+static emacs_value Fzmq_send (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  intptr_t socket = env->get_user_ptr(env, args[0]);
+
+  emacs_value buf = args[1];
+  
+  ptrdiff_t size = 0;
+  // The first one will fail and write the length of the variable to size
+  env->copy_string_contents(env, buf, NULL, &size);
+
+  // Now we know the size and can do the copy
+  char *buf_str = malloc(size);
+  env->copy_string_contents(env, buf, buf_str, &size);
+
+  int flags = env->extract_integer(env, args[2]);
+
+  int result= zmq_send(socket, buf_str, strlen(buf_str), flags);
+  free(buf_str);
+  return env->make_integer(env, result);
+}
+
+// http://api.zeromq.org/4-2:zmq-recv
+// int zmq_recv (void *socket, void *buf, size_t len, int flags);
+// (zmq-recv socket len flags)
+static emacs_value Fzmq_recv (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  intptr_t socket = env->get_user_ptr(env, args[0]);
+  int len = env->extract_integer(env, args[1]);
+  int flags = env->extract_integer(env, args[2]);
+
+  char cbuffer[len];
+
+  int res = zmq_recv (socket, cbuffer, len, flags);
+
+  emacs_value result = env->make_string(env, cbuffer, strlen(cbuffer) - 1);
+  emacs_value ret = env->make_integer(env, res);
+
+  emacs_value list = env->intern(env, "list");
+  emacs_value largs[] = {result, ret};
+  
+  return env->funcall(env, list, 2, largs);
+  
+}
+
 
 int emacs_module_init(struct emacs_runtime *ert)
 {
   emacs_env *env = ert->get_environment(ert);
 
-  DEFUN("zmq-send-and-recv", zmq_send_and_recv, 1, 1,
-	"(zmq-send-and-recv arg)\n" \
-	"Send ARG to server. Returns what server sends back.",
+
+  DEFUN("zmq-ctx-new", Fzmq_ctx_new, 0, 0,
+	"(zmq-ctx-new)\n" \
+	"create new ØMQ context. Returns pointer to context.\n" \
+	"http://api.zeromq.org/4-2:zmq-ctx-new",
+	NULL);
+  
+  DEFUN("zmq-ctx-destroy", Fzmq_ctx_destroy, 1, 1,
+	"(zmq-ctx-destroy CONTEXT)\n" \
+	"terminate a ØMQ context\n" \
+	"http://api.zeromq.org/4-2:zmq-ctx-destroy", NULL);
+
+  // Defines a constant variable
+  defconsti(env, "ZMQ-REQ", (int)ZMQ_REQ, "ZMQ_REQ");
+
+  DEFUN("zmq-socket", Fzmq_socket, 2, 2,
+	"(zmq-socket CONTEXT TYPE)\n"
+	"create ØMQ socket. Returns pointer to socket."\
+	"CONTEXT is from `zmq-ctx-new`.\n"
+	"see http://api.zeromq.org/4-2:zmq-socket for TYPE info.", NULL);
+  
+  DEFUN("zmq-close", Fzmq_close, 1, 1,
+	"(zmq-close SOCKET)\n" \       
+	"close ØMQ socket. SOCKET is from `zmq-socket`\n" \
+	"Returns status of call."\
+	"http://api.zeromq.org/4-2:zmq-close",	
 	NULL);
 
-  DEFUN("stest", stest, 1, 1, NULL, NULL);
+  DEFUN("zmq-connect", Fzmq_connect, 2, 2,
+	"(zmq-connect SOCKET ENDPOINT)\n" \
+	"Create outgoing connection from socket to endpoint." \
+	"The endpoint is a string consisting of a transport :// followed by an address. The transport specifies the underlying protocol to use. The address specifies the transport-specific address to connect to." \
+	"Returns result of call."\
+	"http://api.zeromq.org/4-2:zmq-connect",
+	NULL);
+  
+  DEFUN("zmq-send", Fzmq_send, 3, 3,
+	"(zmq-send SOCKET BUF FLAGS)\n" \
+	"send a message part on a socket" \
+	"SOCKET is from `zmq-socket`." \
+	"BUF is a string to send." \
+	"FLAGS is an int." \
+	"http://api.zeromq.org/4-2:zmq-send", NULL);
+
+  DEFUN("zmq-recv", Fzmq_recv, 3, 3,
+	"(zmq-recv SOCKET LEN FLAGS)\n" \
+	"receive a message part from a socket.\n" \
+	"SOCKET is from `zmq-socket`." \
+	"LEN is the number of bytes to get." \
+	"FLAGS is an int." \
+	"Returns (result status)." \
+	"http://api.zeromq.org/4-2:zmq-recv", NULL);
 
 
   provide(env, "mod-zmq");
