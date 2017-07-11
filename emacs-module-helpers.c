@@ -2,6 +2,36 @@
 #include "emacs-module.h"
 #include "emacs-module-helpers.h"
 
+// Extract a number as a double from arg. ints are cast as floats.
+double extract_double (emacs_env *env, emacs_value arg)
+{
+  emacs_value type = env->type_of(env, arg);
+  double result;
+  if (env->eq(env, type, env->intern(env, "integer")))
+    {
+      result = (float) env->extract_integer(env, arg);
+    } else if (env->eq(env, type, env->intern(env, "float")))
+    {
+      result = env->extract_float(env, arg);
+    }
+  return result;
+}
+
+// Extract a number as an integer from arg. floats are cast as ints.
+int extract_integer (emacs_env *env, emacs_value arg)
+{
+  emacs_value type = env->type_of(env, arg);
+  int result;
+  if (env->eq(env, type, env->intern(env, "integer")))
+    {
+      result = env->extract_integer(env, arg);
+    } else if (env->eq(env, type, env->intern(env, "float")))
+    {
+      result = (int) env->extract_float(env, arg);
+    }
+  return result;
+}
+
 void defconst (emacs_env *env, const char *name, double value, const char *doc)
 {
   // These are functions we will call
