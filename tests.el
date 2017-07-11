@@ -1,5 +1,6 @@
 (add-to-list 'load-path (expand-file-name "."))
 
+
 (defun test-linalg () 
   (require 'gsl-linalg)
   (print (gsl-linalg-LU-solve
@@ -7,13 +8,27 @@
 	   [0.41 0.24 0.99 0.58]
 	   [0.14 0.30 0.97 0.66]
 	   [0.51 0.13 0.19 0.85]]
-	  [1.0 2.0 3.0 4.0])))
+	  [1.0 2.0 3.0 4.0]))
+  (print (gsl-linalg-LU-solve
+	  [[0.18 0.60 0.57 0.96]
+	   [0.41 0.24 0.99 0.58]
+	   [0.14 0.30 0.97 0.66]
+	   [0.51 0.13 0.19 0.85]]
+	  [1.0 2.0 3.0 4]))
+
+  (print (gsl-blas-dgemm
+	  [[0.11 0.12 0.13]
+	   [0.21 0.22 0.23]]
+	  [[1011 1012]
+	   [1021 1022]
+	   [1031 1032]])))
 
 
 (defun test-constants ()
   (require 'gsl-constants)
   (print GSL-CONST-MKSA-PLANCKS-CONSTANT-H)
   (print (describe-variable 'GSL-CONST-MKSA-PLANCKS-CONSTANT-H)))
+
 
 (defun test-types ()
   (require 'mod-types)
@@ -32,6 +47,7 @@
   (print (mvariadic 1 2))
   (print (mvariadic 1 2 3))
   (print (mvariadic 1 2 3 4)))
+
 
 (defun test-integration ()
   (require 'gsl-integration)
