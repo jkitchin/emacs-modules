@@ -1,31 +1,656 @@
-* Zeromq bindings for Emacs via dynamic modules
+* DONE Zeromq bindings for Emacs via dynamic modules
+  CLOSED: [2017-07-12 Wed 07:38]
+  :PROPERTIES:
+  :categories: emacs,dynamic-module
+  :date:     2017/07/12 07:38:28
+  :updated:  2017/07/12 07:38:28
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules/index.html
+  :END:
 
-Finally, we get to the real reason I started playing around with dynamic modules: [[http://zguide.zeromq.org/][zeromq]]. Zeromq is a messaging library that [[http://jupyter-client.readthedocs.io/en/latest/messaging.html][Jupyter]] uses to communicate with kernels. I thought we might get a smoother integration with Emacs and Jupyter if we could use zeromq directly. Currently we have to run a web server that does the communication for us. We won't solve the Jupyter problem today, but we will look at communicating with a Zeromq server from Emacs.
+I do a lot of scientific programming, and it is one of the reasons I have been learning to extend Emacs with dynamic modules. They have allowed me to add physical constants, numerical integration, root finding and linear algebra from established c-libraries to Emacs. Today I am taking a break from that and finally getting to another one of the reasons I started playing around with dynamic modules: [[http://zguide.zeromq.org/][zeromq]]. Zeromq is a messaging library that [[http://jupyter-client.readthedocs.io/en/latest/messaging.html][Jupyter]] uses to communicate with kernels. I thought we might get a smoother integration with Emacs and Jupyter if we could use zeromq directly to communicate between org-mode and the kernel. Currently we have to run a web server that does the communication for us via http requests. We won't solve the Jupyter problem today, but we will look at communicating with a Zeromq server from Emacs.
 
-This might have lots of other useful applications. Suppose Emacs could communicate directly with other zeromq servers to retrieve data from. It might even be possible for Emacs to run its own zeromq server, and other instances of Emacs could then communicate with it. Collaborative editing anyone?
+This might have lots of other useful applications. Suppose Emacs could communicate directly with other zeromq servers to retrieve data from, perhaps scientific data. It might even be possible for Emacs to run its own zeromq server, and other instances of Emacs could then communicate with it. Collaborative editing anyone? 
 
-Here we just implement the "Hello world" example in the [[http://zguide.zeromq.org/page:all#Ask-and-Ye-Shall-Receive][zeromq guide]]. The slightly altered server code is here: [[./hwserver.c]]. All it does is receive a string, and then send a response (in this case just the string "World"). 
+Here we just implement the "Hello world" client example in the [[http://zguide.zeromq.org/page:all#Ask-and-Ye-Shall-Receive][zeromq guide]]. The code for the server, a c-client, the mod-zmq library, a makefile and tests can be found at https://github.com/jkitchin/emacs-modules/tree/master/zeromq. All the server does is receive a string, and then send a response (in this case just the string "World") back to the client. 
 
-We wrap the client code into a dynamic module that exposes one function =zmq-send-and-recv= which takes one argument that is a string. This function creates client, connects to the server, sends the string, and receives the response. A real zeromq API would break this up
+To run this, make sure to run the hwserver executable in a terminal. I wrapped the  zeromq commands required to implement the client into a dynamic module. Since this example focuses on strings, the module returns strings to Emacs. I am not sure if that is always the right thing to do, as zeromq more generically uses bytes, but I will have to wait until I know more about zeromq to know if this is an issue. 
 
-#+BEGIN_SRC emacs-lisp :results value
+This dynamic module uses a new feature that none of the previous posts used, and that is the user_ptr. These allow you to essentially return a reference pointer back to emacs that you can pass back to another function. That way they stay alive between function calls. For example, here we have to create a context and socket and pass these items to functions like zmq_send and zmq_recv.
+
+The directory this library is in is not on my path, so we load it like this:
+
+#+BEGIN_SRC emacs-lisp
 (add-to-list 'load-path (expand-file-name "."))
 (require 'mod-zmq)
+#+END_SRC
 
-(zmq-send-and-recv "Hello")
+Here are the functions and their signatures that have been implemented so far. I only implemented the ones I needed for the client. The signatures may change in the future; this is just a proof of concept for now for the purpose of building the client.
+
+#+BEGIN_SRC emacs-lisp
+(apropos-command "zmq*" t)
+(with-current-buffer "*Apropos*" (buffer-string))
 #+END_SRC
 
 #+RESULTS:
-: test
+#+begin_example
+Type RET on a type label to view its full documentation.
 
-Ideally, we might have a elisp code like this for the client. That will take a lot more work one day!
+zmq-close
+  Function: (zmq-close SOCKET)
+zmq-connect
+  Function: (zmq-connect SOCKET ENDPOINT)
+zmq-ctx-destroy
+  Function: (zmq-ctx-destroy CONTEXT)
+zmq-ctx-new
+  Function: (zmq-ctx-new)
+zmq-recv
+  Function: (zmq-recv SOCKET LEN FLAGS)
+zmq-send
+  Function: (zmq-send SOCKET BUF FLAGS)
+zmq-socket
+  Function: (zmq-socket CONTEXT TYPE)
+#+end_example
 
-#+BEGIN_SRC emacs-lisp
+You can see the c code for the client here: [[./hwclient.c]]. Here is a simple elisp version of the hwclient that basically does the same thing! The main difference is I added a while loop around the zmq-recv because sometimes it returns -1 and no result. So, here we loop until the return result is not -1. That seems to do the right thing.
+
+#+BEGIN_SRC emacs-lisp :results output
 (let* ((context (zmq-ctx-new))
-       (requestor (zmq-socket context ZMQ-REQ)))
-  (zmq-connect requestor "tcp://localhost:5555")
-  (zmq-send "Hello")
-  (zmq-recv)
-  (zmq-close requestor)
+       (socket (zmq-socket context ZMQ-REQ))
+       (recv-ret -1)
+       (result))
+
+  (zmq-connect socket "tcp://localhost:5555")
+  (zmq-send socket "Hello" 0)
+
+  (while (= recv-ret -1)
+    (setq result (zmq-recv socket 10 0)
+	  recv-ret (second result)))
+
+  (print result)
+
+  (zmq-close socket)
   (zmq-ctx-destroy context))
 #+END_SRC
+
+#+RESULTS:
+: 
+: ("World" 5)
+
+Basically this creates the context, then the socket, and connects to it on port 5555 of the localhost where the server is running. Then we send the string "Hello". The server returns the string "World" and tells us it sent 5 bytes. Then we close the socket and destroy the context. There is a lot of code in the module to make this happen. A lot of it is converting args in emacs functions to things we can use in c, running a few lines of zmq commands, and then code to convert those results back to emacs values. Finally, there is code to register each function and define docstrings for them. I am not totally convinced this is the best way to do this, but it does work! An alternative might be [[https://github.com/tromey/emacs-ffi][emacs-ffi]], which might enable most of this to be developed in just elisp. 
+
+* DONE An Emacs zeromq library using an ffi
+  CLOSED: [2017-07-13 Thu 06:44]
+  :PROPERTIES:
+  :categories: emacs,dynamic-module,ffi,zeromq
+  :date:     2017/07/13 06:44:23
+  :updated:  2017/07/13 06:44:23
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/13/An-Emacs-zeromq-library-using-an-ffi.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/13/An-Emacs-zeromq-library-using-an-ffi/index.html
+  :END:
+
+An alternative approach to writing your own dynamic module (which requires some proficiency in c) is to use a foreign function interface (ffi). There is one for emacs at https://github.com/tromey/emacs-ffi, and it is also a dynamic module itself that uses [[https://github.com/libffi/libffi][libffi]]. This lets you use elisp to create functions in Emacs that actually call functions in some other library installed on your system. Here, we use this module to recreate our zeromq bindings that I previously [[http://kitchingroup.cheme.cmu.edu/blog/2017/07/12/Zeromq-bindings-for-Emacs-via-dynamic-modules/][posted]].
+
+The emacs-ffi module works fine as it is, but I found it useful to redefine one of the main macros (define-ffi-function) with the following goals in mind:
+
+1. Allow me to specify the argument names and docstrings for each arg that contain its type and a description of the arg.
+2. Document what each function returns (type and description).
+3. Combine those two things into an overall docstring on the function.
+
+These are important to me because it allows Emacs to work at its fullest potential while writing elisp code, including having the right function signatures in eldoc, and easy access to documentation of each function. You can see the new definition [[id:A2B7F051-EA53-4882-A978-05FAD211BB81][here]]. For example, here is a docstring for zmq-send using that new macro:
+
+#+BEGIN_SRC emacs-lisp :exports results
+(describe-function 'zmq-send)
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+zmq-send is a Lisp function.
+
+(zmq-send *SOCKET *MSG LEN FLAGS)
+
+For more information check the manuals.
+
+send a message part on a socket.
+http://api.zeromq.org/4-2:zmq-send
+
+,*SOCKET (:pointer) Pointer to a socket.
+,*MSG (:pointer) Pointer to a C-string to send
+LEN (:size_t) Number of bytes to send
+FLAGS (:int) 
+
+Returns: Number of bytes sent or -1 on failure. (:int)
+#+end_example
+
+That has everything you need to know
+
+#+BEGIN_SRC emacs-lisp
+(define-ffi-function zmq-send-ori "zmq_send" :int (:pointer :pointer :size_t :int) zmq)
+#+END_SRC
+
+#+RESULTS:
+: zmq-send-ori
+
+Compare that to this docstring from the original macro. 
+
+#+RESULTS:
+#+begin_example
+zmq-send-ori is a Lisp function.
+
+(zmq-send-ori G251 G252 G253 G254)
+
+For more information check the manuals.
+#+end_example
+
+You can see the zeromq function definitions in elisp [[id:29C81B62-C0DF-44D4-AFE2-6EE239C70500][here]]. Here is a list of the functions we have created:
+
+#+BEGIN_SRC emacs-lisp :exports results
+(apropos-command "zmq*" t)
+(with-current-buffer "*Apropos*" (buffer-string))
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+Type RET on a type label to view its full documentation.
+
+zmq
+  Function: Returns a pointer to the libzmq library.
+zmq-close
+  Function: close ØMQ socket.
+zmq-connect
+  Function: create outgoing connection from socket.
+zmq-ctx-destroy
+  Function: terminate a ØMQ context.
+zmq-ctx-new
+  Function: create new ØMQ context.
+zmq-recv
+  Function: receive a message part from a socket.
+zmq-send
+  Function: send a message part on a socket.
+zmq-socket
+  Function: create ØMQ socket.
+#+end_example
+
+Now we can use these to create the client, this time in elisp. Just as in the last post, you need to run the hwserver in a terminal for this to work. Here is the client code.
+
+#+BEGIN_SRC emacs-lisp :results output
+(let* ((context (zmq-ctx-new))
+       (socket (zmq-socket context ZMQ-REQ)))
+
+  (with-ffi-string (endpoint "tcp://localhost:5555")
+    (zmq-connect socket endpoint))
+
+  (with-ffi-string (msg "Hi there")
+    (zmq-send socket msg 5 0))
+
+  (with-ffi-string (recv (make-string 10 ""))
+    (let ((status -1))
+      (cl-loop do (setq status (zmq-recv socket recv 10 0)) until (not (= -1 status)))) 
+    (print (ffi-get-c-string recv)))
+
+  (zmq-close socket)
+  (zmq-ctx-destroy context))
+#+END_SRC
+
+#+RESULTS:
+: 
+: "World     "
+
+This client basically performs the same as the previously one we built. You can see we are mixing some programming styles here. For example, we have to create pointers to string variables in advance that the ffi will be writing to later like we would do in c. We use the with-ffi-string macro which frees the pointer when we are done with it. It basically just avoids me having to create, use, and destroy the pointers myself. So, there it is, a working elisp zeromq client!
+
+
+** Summary thoughts
+
+For this example, I feel like the ffi approach here (with my modified function making macro) was much easier than what I previously did with a compiled c-library (although it benefited a lot from my recent work on the c-library). I really like working in elisp, which is a much greater strength of mine than programming in c. It is pretty clear, however, that you have to know how c works to use this, otherwise it isn't so obvious that some functions will return a status, and do something by side effect, e.g. put results in one of the arguments. The signatures of the ffi functions are basically limited by the signatures of the c-functions. If you want to change the signature in Emacs, you have to write wrapper functions to do that.
+
+The macro I used here to create the functions creates really good (the kind I like anyway) docstrings when you use it fully. That isn't a totally new idea, I tried it out [[http://kitchingroup.cheme.cmu.edu/blog/2017/03/22/A-better-defun-for-emacs-lisp/][here]] before.  In contrast, the original version not only didn't have a docstring, but every arg had a gensym (i.e. practically random) name! I think it would be very difficult to get the same level of documentation when writing c-code to make a module. In the c-code, there is a decoupling of the definition of a c-function (which always has the same signature) that gets data from the Emacs env, e.g. arguments, does stuff with them, and creates data to put back into the env, and the emacs_module_init function where you declare these functions to Emacs and tell it what to call the function in emacs, about how many arguments it takes, etc... The benefit of this is you define what the Emacs signature will look like, and then write the c-function that does the required work. The downside of this is the c-function and Emacs declarations are often far apart in the editor, and there is no easy way to auto-generate docstrings like I can with lisp macros. You would have to manually build them up yourself, and keep them synchronized. Also, I still have not figured out how to get emacs to show the right signature for c-generated functions.
+
+The ffi approach still uses a dynamic module approach, so it still requires a modern Emacs with the module compiled and working. It still requires (in this case) the zeromq library to be installed on the system too. Once you have those, however, the elisp zeromq bindings by this approach is done /completely in elisp/!
+
+It will be interesting in the coming weeks to see how this approach works with the GNU Scientific Library, particularly with arrays. Preliminary work shows that while the elisp ffi code is /much/ shorter and easier to write than the corresponding c-code for some examples (e.g. a simple mathematical function), it is not as fast. So if performance is crucial, it may still pay off to write the c-code.
+
+** Modified ffi-define-function macro
+   :PROPERTIES:
+   :ID:       A2B7F051-EA53-4882-A978-05FAD211BB81
+   :END:
+   
+Here are two macros I modified to add docstrings and named arguments too.
+
+#+BEGIN_SRC emacs-lisp
+(defmacro define-ffi-library (symbol name)
+  "Create a pointer named to the c library."
+  (let ((library (cl-gensym))
+	(docstring (format "Returns a pointer to the %s library." name)))
+    (set library nil)
+    `(defun ,symbol ()
+       ,docstring
+       (or ,library
+	   (setq ,library (ffi--dlopen ,name))))))
+
+(defmacro define-ffi-function (name c-name return args library &optional docstring)
+  "Create an Emacs function from a c-function.
+NAME is a symbol for  the emacs function to create.
+C-NAME is a string of the c-function to use.
+RETURN is a type-keyword or (type-keyword docstring)
+ARGS is a list of type-keyword or (type-keyword name &optional arg-docstring)
+LIBRARY is a symbol usually defined by `define-ffi-library'
+DOCSTRING is a string for the function to be created.
+
+An overall docstring is created for the function from the arg and return docstrings.
+"
+  ;; Turn variable references into actual types; while keeping
+  ;; keywords the same.
+  (let* ((return-type (if (keywordp return)
+			  return
+			(car return)))
+	 (return-docstring (format "Returns: %s (%s)"
+				   (if (listp return)
+				       (second return)
+				     "")
+				   return-type))
+	 (arg-types (vconcat (mapcar (lambda (arg)
+				       (if (keywordp arg)
+					   (symbol-value arg)
+					 ;; assume list (type-keyword name &optional doc)
+					 (symbol-value (car arg))))
+				     args)))
+	 (arg-names (mapcar (lambda (arg)
+			      (if (keywordp arg)
+				  (cl-gensym)
+				;; assume list (type-keyword name &optional doc)
+				(second arg)))
+			    args))
+	 (arg-docstrings (mapcar (lambda (arg)
+				   (cond
+				    ((keywordp arg)
+				     "")
+				    ((and (listp arg) (= 3 (length arg)))
+				     (third arg))
+				    (t "")))
+				 args))
+	 ;; Combine all the arg docstrings into one string
+	 (arg-docstring (mapconcat 'identity
+				   (mapcar* (lambda (name type arg-doc)
+					      (format "%s (%s) %s"
+						      (upcase (symbol-name name))
+						      type
+						      arg-doc))
+					    arg-names arg-types arg-docstrings)
+				   "\n"))
+	 (function (cl-gensym))
+	 (cif (ffi--prep-cif (symbol-value return-type) arg-types)))
+    (set function nil)
+    `(defun ,name (,@arg-names)
+       ,(concat docstring "\n\n" arg-docstring "\n\n" return-docstring)
+       (unless ,function
+	 (setq ,function (ffi--dlsym ,c-name (,library))))
+       ;; FIXME do we even need a separate prep?
+       (ffi--call ,cif ,function ,@arg-names))))
+#+END_SRC
+
+#+RESULTS:
+: define-ffi-function
+
+
+** The zeromq bindings
+   :PROPERTIES:
+   :ID:       29C81B62-C0DF-44D4-AFE2-6EE239C70500
+   :END:
+
+These define the ffi functions we use in this post. I use a convention that pointer args start with a * so they look more like the c arguments. I also replace all _ with - so it looks more lispy, and the function names are easier to type.
+
+#+BEGIN_SRC emacs-lisp :results output
+(add-to-list 'load-path (expand-file-name "."))
+(require 'ffi)
+
+(define-ffi-library zmq "libzmq")
+
+
+(define-ffi-function zmq-ctx-new "zmq_ctx_new"
+  (:pointer "Pointer to a context")
+  nil zmq
+  "create new ØMQ context.
+http://api.zeromq.org/4-2:zmq-ctx-new")
+
+
+(define-ffi-function zmq-ctx-destroy "zmq_ctx_destroy"
+  (:int "status")
+  ((:pointer *context)) zmq
+  "terminate a ØMQ context.
+http://api.zeromq.org/4-2:zmq-ctx-destroy")
+
+
+(define-ffi-function zmq-socket "zmq_socket"
+  (:pointer "Pointer to a socket.")
+  ((:pointer *context "Created by `zmq-ctx-new '.") (:int type)) zmq
+  "create ØMQ socket.
+http://api.zeromq.org/4-2:zmq-socket")
+
+
+(define-ffi-function zmq-close "zmq_close"
+  (:int "Status")
+  ((:pointer *socket "Socket pointer created by `zmq-socket'")) zmq
+  "close ØMQ socket.
+http://api.zeromq.org/4-2:zmq-close")
+
+
+(define-ffi-function zmq-connect "zmq_connect" 
+  (:int "Status")
+  ((:pointer *socket "Socket pointer created by `zmq-socket'")
+   (:pointer *endpoint "Char pointer, e.g. (ffi-make-c-string \"tcp://localhost:5555\")"))
+  zmq
+  "create outgoing connection from socket.
+http://api.zeromq.org/4-2:zmq-connect")
+
+
+(define-ffi-function zmq-send "zmq_send"
+  (:int "Number of bytes sent or -1 on failure.")
+  ((:pointer *socket "Pointer to a socket.")
+   (:pointer *msg "Pointer to a C-string to send")
+   (:size_t len "Number of bytes to send")
+   (:int flags)) 
+  zmq
+   "send a message part on a socket.
+http://api.zeromq.org/4-2:zmq-send")
+
+
+(define-ffi-function zmq-recv "zmq_recv"
+  (:int "Number of bytes received or -1 on failure.")
+  ((:pointer *socket)
+   (:pointer *buf "Pointer to c-string to put result in.")
+   (:size_t len "Length to truncate message at.")
+   (:int flags)) 
+  zmq
+   "receive a message part from a socket.
+http://api.zeromq.org/4-2:zmq-recv")
+
+
+;; We cannot get these through a ffi because the are #define'd for the CPP and
+;; invisible in the library. They only exist in the zmq.h file.
+(defconst ZMQ-REQ 3
+  "A socket of type ZMQ_REQ is used by a client to send requests
+  to and receive replies from a service. This socket type allows
+  only an alternating sequence of zmq_send(request) and
+  subsequent zmq_recv(reply) calls. Each request sent is
+  round-robined among all services, and each reply received is
+  matched with the last issued request.")
+#+END_SRC
+
+#+RESULTS:
+
+
+
+* libzmq symbols
+
+#+BEGIN_SRC sh :results output
+nm /usr/local/lib/libzmq.dylib | grep _zmq | wc -l
+#+END_SRC
+
+#+RESULTS:
+:       61
+
+#+BEGIN_SRC sh
+nm /usr/local/lib/libzmq.dylib | grep _zmq
+#+END_SRC
+
+#+RESULTS:
+| 43980            | T | _zmq_atomic_counter_dec     |
+| 00000000000439a0 | T | _zmq_atomic_counter_destroy |
+| 43971            | T | _zmq_atomic_counter_inc     |
+| 43953            | T | _zmq_atomic_counter_new     |
+| 43969            | T | _zmq_atomic_counter_set     |
+| 43998            | T | _zmq_atomic_counter_value   |
+| 0000000000041dc0 | T | _zmq_bind                   |
+| 0000000000041bf4 | T | _zmq_close                  |
+| 0000000000041e02 | T | _zmq_connect                |
+| 0000000000041bad | T | _zmq_ctx_destroy            |
+| 0000000000041b25 | T | _zmq_ctx_get                |
+| 00000000000419bb | T | _zmq_ctx_new                |
+| 0000000000041ace | T | _zmq_ctx_set                |
+| 0000000000041a8f | T | _zmq_ctx_shutdown           |
+| 0000000000041a41 | T | _zmq_ctx_term               |
+| 43872            | T | _zmq_curve_keypair          |
+| 00000000000438e7 | T | _zmq_curve_public           |
+| 000000000004354d | T | _zmq_device                 |
+| 0000000000041e86 | T | _zmq_disconnect             |
+| 00000000000419ae | T | _zmq_errno                  |
+| 0000000000041c8b | T | _zmq_getsockopt             |
+| 43564            | T | _zmq_has                    |
+| 0000000000041b67 | T | _zmq_init                   |
+| 00000000000420d1 | T | _zmq_msg_close              |
+| 42944            | T | _zmq_msg_copy               |
+| 00000000000420c7 | T | _zmq_msg_data               |
+| 000000000004295e | T | _zmq_msg_get                |
+| 00000000000429e3 | T | _zmq_msg_gets               |
+| 42638            | T | _zmq_msg_init               |
+| 42206            | T | _zmq_msg_init_data          |
+| 00000000000420bd | T | _zmq_msg_init_size          |
+| 000000000004294e | T | _zmq_msg_more               |
+| 000000000004293a | T | _zmq_msg_move               |
+| 00000000000423db | T | _zmq_msg_recv               |
+| 0000000000041edb | T | _zmq_msg_send               |
+| 0000000000042a74 | T | _zmq_msg_set                |
+| 42930            | T | _zmq_msg_size               |
+| 0000000000042ab2 | T | _zmq_poll                   |
+| 43501            | T | _zmq_proxy                  |
+| 43528            | T | _zmq_proxy_steerable        |
+| 42432            | T | _zmq_recv                   |
+| 000000000004267c | T | _zmq_recviov                |
+| 00000000000423c8 | T | _zmq_recvmsg                |
+| 0000000000041f4e | T | _zmq_send                   |
+| 00000000000420db | T | _zmq_send_const             |
+| 42210            | T | _zmq_sendiov                |
+| 0000000000041ec8 | T | _zmq_sendmsg                |
+| 0000000000041c31 | T | _zmq_setsockopt             |
+| 00000000000435a2 | T | _zmq_sleep                  |
+| 0000000000041bb7 | T | _zmq_socket                 |
+| 0000000000041ce5 | T | _zmq_socket_monitor         |
+| 00000000000435ac | T | _zmq_stopwatch_start        |
+| 000000000004360f | T | _zmq_stopwatch_stop         |
+| 00000000000419a4 | T | _zmq_strerror               |
+| 0000000000041ba3 | T | _zmq_term                   |
+| 000000000004367c | T | _zmq_threadclose            |
+| 43634            | T | _zmq_threadstart            |
+| 0000000000041e44 | T | _zmq_unbind                 |
+| 000000000004198f | T | _zmq_version                |
+| 43780            | T | _zmq_z85_decode             |
+| 00000000000436a4 | T | _zmq_z85_encode             |
+
+#+BEGIN_SRC emacs-lisp
+(defmacro define (name value &optional docstring)
+  "Define a constant with NAME (a symbol), VALUE, and optional docstring.
+The NAME will be upcased and _ replaced with -.
+This exists so you can copy a line from zmq.h to create the constant, e.g.
+(define ZMQ_IO_THREADS_DFLT  1) creates the constant ZMQ-IO-THREADS-DFLT with a value of 1.
+"
+  `(defconst ,(intern (replace-regexp-in-string "_" "-" (upcase (symbol-name name))))
+     ,(if (symbolp value)
+	  (intern (replace-regexp-in-string "_" "-" (upcase (symbol-name value))))
+	value)
+     ,docstring))
+
+
+;; These come from /usr/local/include/zmq.h
+
+;; Context options
+(define ZMQ_IO_THREADS 1)
+(define ZMQ_MAX_SOCKETS 2)
+(define ZMQ_SOCKET_LIMIT 3)
+(define ZMQ_THREAD_PRIORITY 3)
+(define ZMQ_THREAD_SCHED_POLICY 4)
+(define ZMQ_MAX_MSGSZ 5)
+
+;; /*  Default for new contexts                                                  */
+(define ZMQ_IO_THREADS_DFLT 1)
+(define ZMQ_MAX_SOCKETS_DFLT 1023)
+(define ZMQ_THREAD_PRIORITY_DFLT -1)
+(define ZMQ_THREAD_SCHED_POLICY_DFLT -1)
+
+;; /*  Socket types.                                                             */
+(define ZMQ_PAIR 0)
+(define ZMQ_PUB 1)
+(define ZMQ_SUB 2)
+(define ZMQ_REQ 3)
+(define ZMQ_REP 4)
+(define ZMQ_DEALER 5)
+(define ZMQ_ROUTER 6)
+(define ZMQ_PULL 7)
+(define ZMQ_PUSH 8)
+(define ZMQ_XPUB 9)
+(define ZMQ_XSUB 10)
+(define ZMQ_STREAM 11)
+
+;; /*  Deprecated aliases                                                        */
+(define ZMQ_XREQ ZMQ_DEALER)
+(define ZMQ_XREP ZMQ_ROUTER)
+
+;; /*  Socket options.                                                           */
+(define ZMQ_AFFINITY 4)
+(define ZMQ_IDENTITY 5)
+(define ZMQ_SUBSCRIBE 6)
+(define ZMQ_UNSUBSCRIBE 7)
+(define ZMQ_RATE 8)
+(define ZMQ_RECOVERY_IVL 9)
+(define ZMQ_SNDBUF 11)
+(define ZMQ_RCVBUF 12)
+(define ZMQ_RCVMORE 13)
+(define ZMQ_FD 14)
+(define ZMQ_EVENTS 15)
+(define ZMQ_TYPE 16)
+(define ZMQ_LINGER 17)
+(define ZMQ_RECONNECT_IVL 18)
+(define ZMQ_BACKLOG 19)
+(define ZMQ_RECONNECT_IVL_MAX 21)
+(define ZMQ_MAXMSGSIZE 22)
+(define ZMQ_SNDHWM 23)
+(define ZMQ_RCVHWM 24)
+(define ZMQ_MULTICAST_HOPS 25)
+(define ZMQ_RCVTIMEO 27)
+(define ZMQ_SNDTIMEO 28)
+(define ZMQ_LAST_ENDPOINT 32)
+(define ZMQ_ROUTER_MANDATORY 33)
+(define ZMQ_TCP_KEEPALIVE 34)
+(define ZMQ_TCP_KEEPALIVE_CNT 35)
+(define ZMQ_TCP_KEEPALIVE_IDLE 36)
+(define ZMQ_TCP_KEEPALIVE_INTVL 37)
+(define ZMQ_IMMEDIATE 39)
+(define ZMQ_XPUB_VERBOSE 40)
+(define ZMQ_ROUTER_RAW 41)
+(define ZMQ_IPV6 42)
+(define ZMQ_MECHANISM 43)
+(define ZMQ_PLAIN_SERVER 44)
+(define ZMQ_PLAIN_USERNAME 45)
+(define ZMQ_PLAIN_PASSWORD 46)
+(define ZMQ_CURVE_SERVER 47)
+(define ZMQ_CURVE_PUBLICKEY 48)
+(define ZMQ_CURVE_SECRETKEY 49)
+(define ZMQ_CURVE_SERVERKEY 50)
+(define ZMQ_PROBE_ROUTER 51)
+(define ZMQ_REQ_CORRELATE 52)
+(define ZMQ_REQ_RELAXED 53)
+(define ZMQ_CONFLATE 54)
+(define ZMQ_ZAP_DOMAIN 55)
+(define ZMQ_ROUTER_HANDOVER 56)
+(define ZMQ_TOS 57)
+(define ZMQ_CONNECT_RID 61)
+(define ZMQ_GSSAPI_SERVER 62)
+(define ZMQ_GSSAPI_PRINCIPAL 63)
+(define ZMQ_GSSAPI_SERVICE_PRINCIPAL 64)
+(define ZMQ_GSSAPI_PLAINTEXT 65)
+(define ZMQ_HANDSHAKE_IVL 66)
+(define ZMQ_SOCKS_PROXY 68)
+(define ZMQ_XPUB_NODROP 69)
+(define ZMQ_BLOCKY 70)
+(define ZMQ_XPUB_MANUAL 71)
+(define ZMQ_XPUB_WELCOME_MSG 72)
+(define ZMQ_STREAM_NOTIFY 73)
+(define ZMQ_INVERT_MATCHING 74)
+(define ZMQ_HEARTBEAT_IVL 75)
+(define ZMQ_HEARTBEAT_TTL 76)
+(define ZMQ_HEARTBEAT_TIMEOUT 77)
+(define ZMQ_XPUB_VERBOSER 78)
+(define ZMQ_CONNECT_TIMEOUT 79)
+(define ZMQ_TCP_MAXRT 80)
+(define ZMQ_THREAD_SAFE 81)
+(define MQ_MULTICAST_MAXTPDU 84)
+(define ZMQ_VMCI_BUFFER_SIZE 85)
+(define ZMQ_VMCI_BUFFER_MIN_SIZE 86)
+(define ZMQ_VMCI_BUFFER_MAX_SIZE 87)
+(define ZMQ_VMCI_CONNECT_TIMEOUT 88)
+(define ZMQ_USE_FD 89)
+
+;; /*  Message options                                                           */
+(define ZMQ_MORE 1)
+(define ZMQ_SHARED 3)
+
+;; /*  Send/recv options.                                                        */
+(define ZMQ_DONTWAIT 1)
+(define ZMQ_SNDMORE 2)
+
+;; /*  Security mechanisms                                                       */
+(define ZMQ_NULL 0)
+(define ZMQ_PLAIN 1)
+(define ZMQ_CURVE 2)
+(define ZMQ_GSSAPI 3)
+
+;; /*  RADIO-DISH protocol                                                       */
+(define ZMQ_GROUP_MAX_LENGTH 15)
+
+;; /*  Deprecated options and aliases                                            */
+(define ZMQ_TCP_ACCEPT_FILTER 38)
+(define ZMQ_IPC_FILTER_PID 58)
+(define ZMQ_IPC_FILTER_UID 59)
+(define ZMQ_IPC_FILTER_GID 60)
+(define ZMQ_IPV4ONLY 31)
+(define ZMQ_DELAY_ATTACH_ON_CONNECT ZMQ_IMMEDIATE)
+(define ZMQ_NOBLOCK ZMQ_DONTWAIT)
+(define ZMQ_FAIL_UNROUTABLE ZMQ_ROUTER_MANDATORY)
+(define ZMQ_ROUTER_BEHAVIOR ZMQ_ROUTER_MANDATORY)
+
+;; /*  Deprecated Message options                                                */
+(define ZMQ_SRCFD 2)
+
+;; /******************************************************************************/
+;; /*  0MQ socket events and monitoring                                          */
+;; /******************************************************************************/
+
+;; /*  Socket transport events (TCP, IPC and TIPC only)                          */
+
+(define ZMQ_EVENT_CONNECTED #x0001)
+(define ZMQ_EVENT_CONNECT_DELAYED #x0002)
+(define ZMQ_EVENT_CONNECT_RETRIED #x0004)
+(define ZMQ_EVENT_LISTENING #x0008)
+(define ZMQ_EVENT_BIND_FAILED #x0010)
+(define ZMQ_EVENT_ACCEPTED #x0020)
+(define ZMQ_EVENT_ACCEPT_FAILED #x0040)
+(define ZMQ_EVENT_CLOSED #x0080)
+(define ZMQ_EVENT_CLOSE_FAILED #x0100)
+(define ZMQ_EVENT_DISCONNECTED #x0200)
+(define ZMQ_EVENT_MONITOR_STOPPED #x0400)
+(define ZMQ_EVENT_ALL #xFFFF)
+
+;; /******************************************************************************/
+;; /*  I/O multiplexing.                                                         */
+;; /******************************************************************************/
+
+(define ZMQ_POLLIN 1)
+(define ZMQ_POLLOUT 2)
+(define ZMQ_POLLERR 4)
+(define ZMQ_POLLPRI 8)
+
+(define ZMQ_POLLITEMS_DFLT 16)
+
+;; /******************************************************************************/
+;; /*  Probe library capabilities                                                */
+;; /******************************************************************************/
+
+(define ZMQ_HAS_CAPABILITIES 1)
+
+;; /*  Deprecated aliases */
+(define ZMQ_STREAMER 1)
+(define ZMQ_FORWARDER 2)
+(define ZMQ_QUEUE 3)
+#+END_SRC
+
+#+RESULTS:
+: ZMQ-IO-THREADS-DFLT
