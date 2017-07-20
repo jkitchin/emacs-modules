@@ -1,0 +1,67 @@
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path (expand-file-name "."))
+(require 'ffi)
+
+(define-ffi-library mongoc "libmongoc")
+
+
+(define-ffi-struct bson_t
+  (flags :type :uint32)
+  (len :type :uint32)
+  (padding :type :uint8))
+
+;; bson_t *
+;; bson_new (void);
+(define-ffi-function bson-new "bson_new" :pointer () mongoc)
+
+;; bson_t *
+;; bson_sized_new (size_t size);
+
+(define-ffi-function bson-sized-new "bson_sized_new" :pointer (:size_t)
+  mongoc)
+
+
+
+(define-ffi-function bson-init "bson_init"
+  :void 
+  ((:pointer b))
+  mongoc
+  "The bson_init() function shall initialize a bson_t that is
+  placed on the stack. ")
+
+;; bool
+;; bson_append_utf8 (bson_t *bson,
+;;                   const char *key,
+;;                   int key_length,
+;;                   const char *value,
+;;                   int length);
+(define-ffi-function bson-append-utf8 "bson_append_utf8"
+  :bool
+  ((:pointer bson)
+   (:pointer key)
+   (:int key_length)
+   (:pointer value)
+   (:int length))
+mongoc
+  "The bson_append_utf8() function shall append a UTF-8 encoded string to bson.
+http://mongoc.org/libbson/current/bson_append_utf8.html")
+#+END_SRC
+
+#+RESULTS:
+: bson-append-utf8
+
+#+BEGIN_SRC emacs-lisp
+(ffi--type-size (bson-new))
+#+END_SRC
+
+#+RESULTS:
+: 24
+
+
+#+BEGIN_SRC emacs-lisp
+(bson-init (ffi--define-struct bson_t :uint32 :uint32 :uint8))
+#+END_SRC
+
+I can't figure out how to do some things here, e.g. what if a function returns a pointer to a struct? For bson-init, for example, the argument is a pointer to a struct, and it seems like you have to make the struct first. But it is not clear how to do that. It seems various ffi implementations in different languages have limited or no support for this kind of thing. Hopefully the emacs-ffi author will clarify soon if it can do this.
+
+

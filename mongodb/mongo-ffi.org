@@ -1,0 +1,154 @@
+
+Start a mongdb
+#+BEGIN_SRC sh
+brew services start mongodb
+#+END_SRC
+
+#+RESULTS:
+| Service `mongodb` already started | use `brew services restart mongodb` to restart. |
+
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path (expand-file-name "."))
+(require 'ffi)
+
+(define-ffi-library mongoc "libmongoc")
+#+END_SRC
+
+#+RESULTS:
+: mongoc
+
+#+BEGIN_SRC emacs-lisp
+(define-ffi-function mongoc-init "mongoc_init" :void nil mongoc)
+(define-ffi-function mongoc-cleanup "mongoc_cleanup" :void nil mongoc)
+#+END_SRC
+
+#+RESULTS:
+: mongoc-cleanup
+
+
+
+#+RESULTS:
+: mongoc_collection_insert
+
+Now we try using these:
+
+#+BEGIN_SRC emacs-lisp
+(mongoc-init)
+
+
+(with-ffi-strings ((uri "mongodb://localhost:27017")
+		   (dbname "db_name")
+		   (collname "coll_name"))
+  
+  (let* ((client (mongoc-client-new uri))
+	 (db (mongoc-client-get-database client dbname))
+	 (collection (mongoc-client-get-collection client dbname collname)))
+
+    collection
+
+    
+
+    
+    ))
+
+(mongoc-cleanup)
+#+END_SRC
+
+
+** new macro forms
+
+#+BEGIN_SRC emacs-lisp
+(define-ffi-function mongoc-init "mongoc_init"
+  :void
+  nil
+  mongo
+  "Initialize the MongoDB C Driver by calling mongoc_init()
+  exactly once at the beginning of your program. It is
+  responsible for initializing global state such as process
+  counters, SSL, and threading primitives.
+http://mongoc.org/libmongoc/current/mongoc_init.html")
+
+(define-ffi-function mongoc-cleanup "mongoc_cleanup"
+  :void
+  ()
+  mongo
+  "Call mongoc_cleanup() exactly once at the end of your program
+  to release all memory and other resources allocated by the
+  driver. You must not call any other MongoDB C Driver functions
+  after mongoc_cleanup(). Note that mongoc_init() does not
+  reinitialize the driver after mongoc_cleanup().")
+
+(define-ffi-function mongoc-client-new "mongoc_client_new"
+  :pointer
+  ((:pointer uri-string))
+  mongo
+  "Creates a new mongoc_client_t using the URI string provided.")
+
+;; bool mongoc_client_set_appname (mongoc_client_t *client, const char *appname)
+(define-ffi-function mongoc-client-set-appname "mongoc_client_set_appname"
+  :bool
+  ((:pointer client) (:pointer appname))
+  "Sets the application name for this client. This string, along
+  with other internal driver details, is sent to the server as
+  part of the initial connection handshake (\"isMaster\").")
+
+
+;;  mongoc_database_t * mongoc_client_get_database (mongoc_client_t *client, const char *name);
+(define-ffi-function mongoc-client-get-database "mongoc_client_get_database"
+  :pointer
+  ((:pointer client) (:pointer name))
+  mongo
+  "Get a database")
+
+;; mongoc_collection_t * mongoc_client_get_collection (mongoc_client_t *client, 	      const char *db, const char *collection);
+(define-ffi-function mongoc-client-get-collection "mongoc_client_get_collection"
+  :pointer
+  ((:pointer client) (:pointer db "String") (:pointer collection "string"))
+  mongo
+  "get a collection")
+
+;; bool
+;; mongoc_client_command_simple (mongoc_client_t *client,
+;;                               const char *db_name,
+;;                               const bson_t *command,
+;;                               const mongoc_read_prefs_t *read_prefs,
+;;                               bson_t *reply,
+;;                               bson_error_t *error);
+(define-ffi-function mongo-client-command-simple "mongoc_client_command_simple"
+  :bool
+  ((:pointer client)
+   (:pointer db)
+   (:pointer command "bson_t")
+   (:pointer mongoc-read-prefs-t)
+   (:pointer reply)
+   (:pointer error))
+  mongo
+  "This is a simplified interface to mongoc_client_command(). It
+  returns the first document from the result cursor into reply.
+  The client's read preference, read concern, and write concern
+  are not applied to the command.")
+
+
+
+
+;; bool
+;; mongoc_collection_insert (mongoc_collection_t *collection,
+;;                           mongoc_insert_flags_t flags,
+;;                           const bson_t *document,
+;;                           const mongoc_write_concern_t *write_concern,
+;;                           bson_error_t *error);
+
+
+;; http://mongoc.org/libmongoc/current/mongoc_insert_flags_t.html
+
+(define-ffi-function mongoc_collection_insert "mongoc_collection_insert"
+  :bool
+  ((:pointer collection)
+   (:int flags)
+   (:pointer document)
+   (:pointer write_concern)
+   (:pointer error))
+  mongo
+  "some")
+#+END_SRC
