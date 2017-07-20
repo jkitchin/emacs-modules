@@ -1,0 +1,1124 @@
+* Template for a literate dynamic module in Emacs
+** Setup
+
+This file is setup with local variables. The variables go to this block and run it when the file opens. This adds a post-tangle hook that will compile all the files, and show you the output. That means you can edit files, type C-c C-v t to tangle the files and see the changes you made.
+
+#+name: my-hook-function
+#+BEGIN_SRC emacs-lisp
+(defun my-special-hook ()
+  (shell-command "make all")
+  (pop-to-buffer "*Shell Command Output*")
+  (message "done with tangle hook"))
+#+END_SRC
+
+#+RESULTS: my-hook-function
+: my-special-hook
+
+
+
+
+#+BEGIN_SRC emacs-lisp
+;; convenience template
+(add-to-list 'org-structure-template-alist
+	     '("c" "#+BEGIN_SRC c\n?\n#+END_SRC"
+	       "<src lang=\"c\">\n?\n</src>"))
+#+END_SRC
+
+Since these files are generated, we do not keep them under version control.
+
+#+BEGIN_SRC text :tangle .gitignore
+Makefile
+*.h
+*.c
+*.o
+*.so
+tests.el
+#+END_SRC
+
+ 
+*** Build the modules
+
+ You can just tangle this file, and a post-hook function will run "make all".
+
+ elisp:org-babel-tangle
+
+ Alternatively, run one of these:
+
+ #+BEGIN_SRC sh
+make test-simple
+ #+END_SRC
+
+*** Compiling C tests  
+
+Here is an example C block that you can run and test. This may be helpful for local tests. I don't use this right now. 
+ 
+#+BEGIN_SRC c :main no
+/* Hello World program */
+
+#include<stdio.h>
+
+main()
+{
+    printf("Hello World");
+
+}
+#+END_SRC
+
+#+RESULTS:
+: Hello World
+
+** emacs-module.h
+   :PROPERTIES:
+   :ID:       C57388A1-F759-4DC3-90D9-5A4B1566B246
+   :END:
+
+This is a required header module. Ideally this would be a system file and it is tied to a specific emacs version. If it is a system header, you may have to adjust the CFLAGS to add an include directory so the compiler can find this. I just put it in my working directory. This is not a file I recommend editing.
+
+#+BEGIN_SRC emacs-lisp
+(emacs-version)
+#+END_SRC
+
+#+RESULTS:
+: GNU Emacs 25.2.1 (x86_64-apple-darwin16.5.0, NS appkit-1504.82 Version 10.12.4 (Build 16E195))
+:  of 2017-04-25
+
+#+BEGIN_SRC c :tangle emacs-module.h
+/* emacs-module.h - GNU Emacs module API.
+
+Copyright (C) 2015-2016 Free Software Foundation, Inc.
+
+This file is part of GNU Emacs.
+
+GNU Emacs is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at
+your option) any later version.
+
+GNU Emacs is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with GNU Emacs.  If not, see <http://www.gnu.org/licenses/>.  */
+
+#ifndef EMACS_MODULE_H
+#define EMACS_MODULE_H
+
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
+#if defined __cplusplus && __cplusplus >= 201103L
+# define EMACS_NOEXCEPT noexcept
+#else
+# define EMACS_NOEXCEPT
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Current environment.  */
+typedef struct emacs_env_25 emacs_env;
+
+/* Opaque pointer representing an Emacs Lisp value.
+   BEWARE: Do not assume NULL is a valid value!  */
+typedef struct emacs_value_tag *emacs_value;
+
+enum emacs_arity { emacs_variadic_function = -2 };
+
+/* Struct passed to a module init function (emacs_module_init).  */
+struct emacs_runtime
+{
+  /* Structure size (for version checking).  */
+  ptrdiff_t size;
+
+  /* Private data; users should not touch this.  */
+  struct emacs_runtime_private *private_members;
+
+  /* Return an environment pointer.  */
+  emacs_env *(*get_environment) (struct emacs_runtime *ert);
+};
+
+
+/* Function prototype for the module init function.  */
+typedef int (*emacs_init_function) (struct emacs_runtime *ert);
+
+/* Function prototype for the module Lisp functions.  */
+typedef emacs_value (*emacs_subr) (emacs_env *env, ptrdiff_t nargs,
+				   emacs_value args[], void *data);
+
+/* Possible Emacs function call outcomes.  */
+enum emacs_funcall_exit
+{
+  /* Function has returned normally.  */
+  emacs_funcall_exit_return = 0,
+
+  /* Function has signaled an error using `signal'.  */
+  emacs_funcall_exit_signal = 1,
+
+  /* Function has exit using `throw'.  */
+  emacs_funcall_exit_throw = 2,
+};
+
+struct emacs_env_25
+{
+  /* Structure size (for version checking).  */
+  ptrdiff_t size;
+
+  /* Private data; users should not touch this.  */
+  struct emacs_env_private *private_members;
+
+  /* Memory management.  */
+
+  emacs_value (*make_global_ref) (emacs_env *env,
+				  emacs_value any_reference);
+
+  void (*free_global_ref) (emacs_env *env,
+			   emacs_value global_reference);
+
+  /* Non-local exit handling.  */
+
+  enum emacs_funcall_exit (*non_local_exit_check) (emacs_env *env);
+
+  void (*non_local_exit_clear) (emacs_env *env);
+
+  enum emacs_funcall_exit (*non_local_exit_get)
+    (emacs_env *env,
+     emacs_value *non_local_exit_symbol_out,
+     emacs_value *non_local_exit_data_out);
+
+  void (*non_local_exit_signal) (emacs_env *env,
+				 emacs_value non_local_exit_symbol,
+				 emacs_value non_local_exit_data);
+
+  void (*non_local_exit_throw) (emacs_env *env,
+				emacs_value tag,
+				emacs_value value);
+
+  /* Function registration.  */
+
+  emacs_value (*make_function) (emacs_env *env,
+				ptrdiff_t min_arity,
+				ptrdiff_t max_arity,
+				emacs_value (*function) (emacs_env *env,
+							 ptrdiff_t nargs,
+							 emacs_value args[],
+							 void *)
+				  EMACS_NOEXCEPT,
+				const char *documentation,
+				void *data);
+
+  emacs_value (*funcall) (emacs_env *env,
+                          emacs_value function,
+                          ptrdiff_t nargs,
+                          emacs_value args[]);
+
+  emacs_value (*intern) (emacs_env *env,
+                         const char *symbol_name);
+
+  /* Type conversion.  */
+
+  emacs_value (*type_of) (emacs_env *env,
+			  emacs_value value);
+
+  bool (*is_not_nil) (emacs_env *env, emacs_value value);
+
+  bool (*eq) (emacs_env *env, emacs_value a, emacs_value b);
+
+  intmax_t (*extract_integer) (emacs_env *env, emacs_value value);
+
+  emacs_value (*make_integer) (emacs_env *env, intmax_t value);
+
+  double (*extract_float) (emacs_env *env, emacs_value value);
+
+  emacs_value (*make_float) (emacs_env *env, double value);
+
+  /* Copy the content of the Lisp string VALUE to BUFFER as an utf8
+     null-terminated string.
+
+     SIZE must point to the total size of the buffer.  If BUFFER is
+     NULL or if SIZE is not big enough, write the required buffer size
+     to SIZE and return false.
+
+     Note that SIZE must include the last null byte (e.g. "abc" needs
+     a buffer of size 4).
+
+     Return true if the string was successfully copied.  */
+
+  bool (*copy_string_contents) (emacs_env *env,
+                                emacs_value value,
+                                char *buffer,
+                                ptrdiff_t *size_inout);
+
+  /* Create a Lisp string from a utf8 encoded string.  */
+  emacs_value (*make_string) (emacs_env *env,
+			      const char *contents, ptrdiff_t length);
+
+  /* Embedded pointer type.  */
+  emacs_value (*make_user_ptr) (emacs_env *env,
+				void (*fin) (void *) EMACS_NOEXCEPT,
+				void *ptr);
+
+  void *(*get_user_ptr) (emacs_env *env, emacs_value uptr);
+  void (*set_user_ptr) (emacs_env *env, emacs_value uptr, void *ptr);
+
+  void (*(*get_user_finalizer) (emacs_env *env, emacs_value uptr))
+    (void *) EMACS_NOEXCEPT;
+  void (*set_user_finalizer) (emacs_env *env,
+			      emacs_value uptr,
+			      void (*fin) (void *) EMACS_NOEXCEPT);
+
+  /* Vector functions.  */
+  emacs_value (*vec_get) (emacs_env *env, emacs_value vec, ptrdiff_t i);
+
+  void (*vec_set) (emacs_env *env, emacs_value vec, ptrdiff_t i,
+		   emacs_value val);
+
+  ptrdiff_t (*vec_size) (emacs_env *env, emacs_value vec);
+};
+
+/* Every module should define a function as follows.  */
+extern int emacs_module_init (struct emacs_runtime *ert);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* EMACS_MODULE_H */
+
+#+END_SRC
+
+** emacs-module-helpers
+
+It is moderately tedious to write dynamic modules with the primitives provided in [[id:C57388A1-F759-4DC3-90D9-5A4B1566B246][emacs-module.h]]. I created this library of helper functions to make writing a little smoother. It is designed as a shared library for now so it is more easily reusable in other projects.
+
+You have to add signatures to [[id:D796707B-A6A6-4908-BDEB-DC60689ADD72][emacs-module-helpers.h]] for these functions that you want to use in other modules.
+
+*** emacs-module-helpers.c
+
+This is the top of the file that has the includes.
+
+ #+BEGIN_SRC c :tangle emacs-module-helpers.c
+#include <string.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include "emacs-module.h"
+#include "emacs-module-helpers.h"
+
+ #+END_SRC
+
+**** Extract data from Emacs arguments
+    
+These functions are convenient when you know you want a specific type from an emacs argument independent of the type that is input. E.g. if you know you want to convert whatever number is put in as an integer or float, or to represent whatever is in the arg as a string. You would normally use these functions to process arguments from Emacs for use in C functions.
+
+***** Get an integer
+      
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+// Extract a number as an integer from arg. floats are cast as ints.
+int extract_integer (emacs_env *env, emacs_value arg)
+{
+  emacs_value type = env->type_of(env, arg);
+  emacs_value Sint = env->intern(env, "integer");
+  emacs_value Sfloat =  env->intern(env, "float");
+  
+  int result = 0;
+  if (env->eq(env, type, Sint))
+    {
+      result = env->extract_integer(env, arg);
+    }
+  else if (env->eq(env, type, Sfloat))
+    {
+      result = (int) env->extract_float(env, arg);
+    }
+  else
+    {
+      emacs_value signal = env->intern(env, "type-error");
+      const char *error = "A non-number arg was passed.";
+      emacs_value message = env->make_string(env, error, strlen(error));
+      env->non_local_exit_signal(env, signal, message);
+    }
+  
+  return result;
+}
+
+#+END_SRC
+
+***** Get a double
+      
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+// Extract a number as a double from arg. ints are cast as floats.
+double extract_double (emacs_env *env, emacs_value arg)
+{
+  emacs_value type = env->type_of(env, arg);
+  double result = 0.0;
+  if (env->eq(env, type, env->intern(env, "integer")))
+    {
+      result = (float) env->extract_integer(env, arg);
+    }
+  else if (env->eq(env, type, env->intern(env, "float")))
+    {
+      result = env->extract_float(env, arg);
+    }
+  else
+    {
+      emacs_value signal = env->intern(env, "type-error");
+      const char *error = "A non-number arg was passed.";
+      emacs_value message = env->make_string(env, error, strlen(error));
+      env->non_local_exit_signal(env, signal, message);
+    }
+  return result;
+}
+
+#+END_SRC
+
+***** Get a string
+
+
+      
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+// Extract a string from arg. if it is a string we get it.
+// Otherwise we format it with %S.
+char * extract_string (emacs_env *env, emacs_value arg)
+{
+  emacs_value type = env->type_of(env, arg);
+  ptrdiff_t size=0;
+
+  if (env->eq(env, type, env->intern(env, "string")))
+    {
+      // the first copy puts the string length into the variable      
+      env->copy_string_contents(env, arg, NULL, &size);
+
+      // then we can allocate the string and copy into it.
+      char *result = malloc(size);
+      env->copy_string_contents(env, arg, result, &size);
+      return result;
+    }
+
+  else
+    {
+      emacs_value msg = emacs_message(env, "got msg: %S", 1, arg);
+      fprintf(stderr, "size-2: %d\n", size);      
+      // the first copy puts the string length into the variable      
+      env->copy_string_contents(env, msg, NULL, &size);
+
+      // then we can allocate the string and copy into it.
+      char *result = malloc(size);
+      env->copy_string_contents(env, msg, result, &size);
+      return result;
+    }
+  
+}
+
+#+END_SRC
+
+**** defconst
+
+These functions are like defining a constant in emacs with defconst. The reason this is helpful is that there is a documentation string on them. There are functions for integers, floats and strings. The main reason you would do this is to encapsulate #define constants from a c-header into Emacs. Otherwise, you might as well do this in an Elisp helper module!
+    
+***** defconsti (integer)
+    
+  #+BEGIN_SRC c :tangle emacs-module-helpers.c
+// define a constant that is an integer in emacs
+void defconsti (emacs_env *env, const char *name, int value, const char *doc)
+{
+  // These are functions we will call
+  emacs_value eval = env->intern(env, "eval");  
+  emacs_value list = env->intern(env, "list");
+
+  // These will make up the list we will eventually eval
+  emacs_value fdefconst = env->intern(env, "defconst");
+  emacs_value sym = env->intern(env, name);
+  emacs_value val = env->make_integer(env, value);
+  emacs_value sdoc = env->make_string(env, doc, strlen(doc));
+
+  // make a list of (defconst sym val doc)
+  emacs_value largs[] = {fdefconst, sym, val, sdoc};
+  emacs_value qlist = env->funcall(env, list, 4, largs);   
+
+  // now eval the list of symbols
+  emacs_value args[] = { qlist };  
+  env->funcall(env, eval, 1, args);
+}
+  #+END_SRC
+
+***** defconstf (float)
+    
+ #+BEGIN_SRC c :tangle emacs-module-helpers.c
+// define a constant that is a float in Emacs
+void defconstf (emacs_env *env, const char *name, double value, const char *doc)
+{
+  // These are functions we will call
+  emacs_value eval = env->intern(env, "eval");  
+  emacs_value list = env->intern(env, "list");
+
+  // These will make up the list we will eventually eval
+  emacs_value fdefconst = env->intern(env, "defconst");
+  emacs_value sym = env->intern(env, name);
+  emacs_value val = env->make_float(env, value);
+  emacs_value sdoc = env->make_string(env, doc, strlen(doc));
+
+  // make a list of (defconst sym val doc)
+  emacs_value largs[] = {fdefconst, sym, val, sdoc};
+  emacs_value qlist = env->funcall(env, list, 4, largs);   
+
+  // now eval the list of symbols
+  emacs_value args[] = { qlist };  
+  env->funcall(env, eval, 1, args);
+}
+  #+END_SRC
+
+***** defconsts (string)
+
+ #+BEGIN_SRC c :tangle emacs-module-helpers.c
+// define a constant that is a string in Emacs
+void defconsts (emacs_env *env, const char *name, const char *value, const char *doc)
+{
+  // These are functions we will call
+  emacs_value eval = env->intern(env, "eval");  
+  emacs_value list = env->intern(env, "list");
+
+  // These will make up the list we will eventually eval
+  emacs_value fdefconst = env->intern(env, "defconst");
+  emacs_value sym = env->intern(env, name);
+  emacs_value val = env->make_string(env, value, strlen(value));
+  emacs_value sdoc = env->make_string(env, doc, strlen(doc));
+
+  // make a list of (defconst sym val doc)
+  emacs_value largs[] = {fdefconst, sym, val, sdoc};
+  emacs_value qlist = env->funcall(env, list, 4, largs);   
+
+  // now eval the list of symbols
+  emacs_value args[] = { qlist };  
+  env->funcall(env, eval, 1, args);
+}
+  #+END_SRC
+
+**** fset
+     :PROPERTIES:
+     :ID:       0824B71F-3E35-41F0-9FA6-A48326E68DD1
+     :END:
+
+This is the primary function to create new functions in Emacs. The functions created this way only show the function signature of (name &rest ARGS), and this seems unavoidable. It is possible to create functions with optional arguments, and variadic arguments. For optional arguments, max_arity is larger than min_arity, and in your function you have to check for how many args were passed in and define variables accordingly. If max_arity is set to -2 or =emacs_variadic_function= you get a variadic function, i.e. arbitrary number of arguments usually defined by &rest in Emacs). I recommend you include the intended signature in the documentation string.
+
+Note that these are all "commands" in Emacs, i.e. you cannot M-x them. See [[id:073DB18B-BB05-4BB8-B6CE-8A0089BB413B][Eval a string]] for a way to create an interactive function from a string.
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+emacs_value fset (emacs_env *env,
+		  const char *name, // emacs function name
+		  // function pointer and signature
+		  emacs_value (*function) (emacs_env *env,
+					   ptrdiff_t nargs,
+					   emacs_value args[],
+					   void *),		  
+		  ptrdiff_t min_arity, // min nargs
+		  ptrdiff_t max_arity, // max nargs
+		  const char *documentation,
+		  void *data)
+{
+  // we will funcall (fset symbol func)
+  emacs_value Sfset = intern(env, "fset");
+  emacs_value Sname = intern(env, name);
+
+  emacs_value Sfunc = env->make_function(env, min_arity, max_arity,
+					 function,
+					 documentation,
+					 data);
+
+  emacs_value args[] =  { Sname, Sfunc };
+  
+  env->funcall(env, Sfset, 2, args);
+}
+
+#+END_SRC
+
+**** emacs_make_list
+
+This is a function to take an arbitrary number of emacs_value arguments and make a list of them. This is useful to build up a form to eval, or for use in defun, etc...
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+emacs_value make_emacs_list (emacs_env *env, int nargs, ...)
+{
+  emacs_value list = env->intern(env, "list");
+  int i;
+  emacs_value args[nargs];
+
+  va_list ap;
+  va_start (ap, nargs);
+
+  for (i = 0; i < nargs; i++)
+    args[i] = va_arg (ap, emacs_value);    /* Get the next argument value. */
+
+  va_end (ap);                  /* Clean up. */
+ 
+  emacs_value result = env->funcall(env, list, nargs, args);
+  emacs_message(env, "%S", 1, result);
+  return result;
+}
+
+#+END_SRC
+    
+**** defun
+
+You cannot use funcall on defun, because defun is a special form. You can, however, build up a list of symbols and eval it to create a defun. The reason to do this is to get a proper argument signature. Note that the functions you use in the body of your function here must be defined within the Emacs environment, either by [[id:0824B71F-3E35-41F0-9FA6-A48326E68DD1][fset]], or as built-in or imported emacs functions. You cannot use this function to make an interactive function at this point. Supporting that would require checking the 5th argument to see if it starts with an interactive symbol.
+
+#+BEGIN_SRC emacs-lisp
+(eval '(defun emacs-name (arg-list) docstring body))
+#+END_SRC     
+
+If you make the body just a simple command like (private-func arg-list), this is not too tedious. The benefit is a proper docstring and argument signature on the function. The key is you have to build up the list of emacs_value elements.  Note that unlike the defun macro which treats body as a list of forms, here there should only be one form, so if you want many you need to wrap them in a progn. There are some tricks to dealing with &optional arguments and &rest arguments. For &optional arguments you have to build up conditionals in the body to handle missing arguments. For &rest arguments, you have to use 
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+emacs_value defun (emacs_env *env,
+		   char *name,
+		   emacs_value *args,
+		   char *docstring,
+		   emacs_value *body)
+{
+  emacs_value eval = env->intern(env, "eval");  
+
+  emacs_value eval_args = make_emacs_list(env, 5,
+					  intern(env, "defun"),
+					  intern(env, name),
+					  args, 
+					  env->make_string(env,
+							   docstring,
+							   strlen(docstring)),
+					  body);
+
+  emacs_value result = env->funcall(env, eval, 1, &eval_args);
+  
+  return result;
+}
+#+END_SRC
+
+Note that defun probably only practically works on the simplest argument structures, i.e. no &optional or &rest arguments. The reason is that you have to create the logic in the function body which is certainly tedious, and it is not clear you can nest lists.
+
+**** require
+    
+ #+BEGIN_SRC c :tangle emacs-module-helpers.c
+// require("feature")
+// This is for use in a module
+void require (emacs_env *env, const char *feature)
+{
+  emacs_value args[] = { intern(env, feature) };
+  env->funcall(env, intern(env, "require"), 1, args);
+}
+
+
+ #+END_SRC
+
+**** provide
+
+ #+BEGIN_SRC c :tangle emacs-module-helpers.c
+void provide (emacs_env *env, const char *feature)
+{
+  emacs_value Qfeat = env->intern (env, feature);
+  emacs_value Qprovide = env->intern (env, "provide");
+  emacs_value args[] = { Qfeat };
+
+  env->funcall (env, Qprovide, 1, args);
+}
+
+
+ #+END_SRC
+
+**** intern
+    
+ #+BEGIN_SRC c :tangle emacs-module-helpers.c
+// This is a smidge shorter than env->intern (env, feature)
+// intern(env, feature)
+emacs_value intern(emacs_env *env, const char *feature)
+{
+  return env->intern (env, feature);
+}
+
+
+ #+END_SRC
+
+**** message
+     :PROPERTIES:
+     :ID:       6FD17DAA-28B9-4018-9A54-0F0139A91759
+     :END:
+
+This will emit a message in emacs. Typical usage is: message(env, "some format string", narguments, arg1, arg2, ...)
+
+Each argument is an emacs_value that you want to use. You have to specify how many arguments will be used since it is variadic.
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+
+emacs_value emacs_message (emacs_env *env, const char *msg, int nargs, ...)
+{
+  emacs_value Smessage = env->intern(env, "message");
+
+  int i;
+
+  emacs_value args[nargs + 1];
+
+  args[0] = env->make_string(env, msg, strlen(msg));
+
+  va_list ap;
+  va_start (ap, nargs);
+
+  for (i = 0; i < nargs; i++)
+    args[i + 1] = va_arg (ap, emacs_value);    /* Get the next argument value. */
+
+  va_end (ap);                  /* Clean up. */
+  
+  emacs_value result = env->funcall(env, Smessage, nargs + 1, &args);
+
+  return result;
+}
+  
+
+#+END_SRC
+
+**** Format a string
+
+Similar to [[id:6FD17DAA-28B9-4018-9A54-0F0139A91759][message]] but with no output to minibuffer.
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+emacs_value emacs_format (emacs_env *env, const char *msg, int nargs, ...)
+{
+  emacs_value Sformat = env->intern(env, "format");
+
+  int i;
+
+  emacs_value args[nargs + 1];
+
+  args[0] = env->make_string(env, msg, strlen(msg));
+
+  va_list ap;
+  va_start (ap, nargs);
+
+  for (i = 0; i < nargs; i++)
+    args[i + 1] = va_arg (ap, emacs_value);    /* Get the next argument value. */
+
+  va_end (ap);                  /* Clean up. */
+  
+  emacs_value result = env->funcall(env, format, nargs + 1, &args);
+
+  return result;
+}
+
+#+END_SRC
+
+**** Read a form from a string
+
+This reads a form from a string and returns an Emacs representation of it.
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+emacs_value read (emacs_env *env, const char *form)
+{
+  emacs_value Sread = intern(env, "read");
+  emacs_value Sform = env->make_string(env, form, strlen(form));
+  emacs_value read_args[] = { Sform };
+  return env->funcall(env, Sread, 1, read_args);
+}
+#+END_SRC
+
+**** Eval a string
+     :PROPERTIES:
+     :ID:       073DB18B-BB05-4BB8-B6CE-8A0089BB413B
+     :END:
+
+This eval's what is read from a string. This may be useful to define interactive functions.    
+     
+#+BEGIN_SRC c :tangle emacs-module-helpers.c
+emacs_value eval (emacs_env *env, const char *form)
+{
+  emacs_value Seval = intern(env, "eval");
+  emacs_value eval_args [] = { read(env, form) };
+  return env->funcall(env, Seval, 1, eval_args);
+}
+#+END_SRC
+
+
+**** TODO extract an array from a vector
+
+For many linear algebra routines, you need arrays from input vector arrays. Here are some elisp functions for things we will need.
+
+#+BEGIN_SRC emacs-lisp
+(defun vector-shape (vec)
+  "Return a vector of the shape of a vector."
+  (let ((shape (vector (length vec))))
+    (if (vectorp (aref vec 0))
+	(vconcat shape (vector-shape (aref vec 0)))
+      shape)))
+
+(defun vector-ndims (vec)
+  "Returns the number of dimensions in a vector."
+  (length (vector-shape vec)))
+
+(defun vector-numel (vec)
+  "Returns the number of elements in a vector."
+  (if (> (length vec) 0)
+      (seq-reduce '* (vector-shape vec) 1)
+    0))
+
+(defun vector-nrows (vec)
+  "Return the number of rows in the vector."
+  (assert (= 2 (vector-ndims vec)))
+  (aref (vector-shape vec) 0))
+
+(defun vector-ncols (vec)
+  "Return the number of columns"
+  (assert (= 2 (vector-ndims vec)))
+  (aref (vector-shape vec) 1))
+#+END_SRC
+
+
+*** emacs-module-helpers.h
+    :PROPERTIES:
+    :ID:       D796707B-A6A6-4908-BDEB-DC60689ADD72
+    :END:
+
+This header file exposes functions in the helper module.
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.h
+#include "emacs-module.h"
+
+#ifndef EMACS_MODULE_HELPERS_H_
+#define EMACS_MODULE_HELPERS_H_
+
+#+END_SRC
+
+Debugging macros
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.h
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+
+#ifdef NDEBUG
+#define debug(fmt, ...)
+#else
+#define debug(fmt, ...) \
+        do { fprintf(stderr, "%s:%d:%s(): " fmt " \nArgs: ", "\n" __FILE__, \
+                                __LINE__, __func__, __VA_ARGS__); } while (0)
+#endif
+#+END_SRC
+
+These are function headers
+
+#+BEGIN_SRC c :tangle emacs-module-helpers.h
+
+void defconsti (emacs_env *env, const char *name, int value, const char *doc);
+void defconstf (emacs_env *env, const char *name, double value, const char *doc);
+void defconsts (emacs_env *env, const char *name, const char *value, const char *doc);
+
+
+double extract_double (emacs_env *env, emacs_value arg);
+int extract_integer (emacs_env *env, emacs_value arg);
+char * extract_string  (emacs_env *env, emacs_value arg);
+
+// There may be some other message function, so we name this one a little more verbose.
+emacs_value emacs_message (emacs_env *env, const char *msg, int nargs, ...);
+emacs_value emacs_format (emacs_env *env, const char *msg, int nargs, ...);
+
+emacs_value intern(emacs_env *env, const char *feature);
+
+emacs_value fset(emacs_env *env,
+		  const char *name, // emacs function name
+		  // function pointer and signature
+		  emacs_value (*function) (emacs_env *env,
+					   ptrdiff_t nargs,
+					   emacs_value args[],
+					   void *),		  
+		  ptrdiff_t min_arity, // min nargs
+		  ptrdiff_t max_arity, // max nargs
+		  const char *documentation,
+		  void *data);
+
+void provide (emacs_env *env, const char *feature);
+void require (emacs_env *env, const char *feature);
+
+emacs_value make_emacs_list (emacs_env *env, int nargs, ...);
+emacs_value defun (emacs_env *env,
+		   char *name,
+		   emacs_value *args,
+		   char *docstring,
+		   emacs_value *body);
+
+emacs_value read (emacs_env *env, const char *form);
+emacs_value eval (emacs_env *env, const char *form);
+
+#endif // EMACS_MODULE_HELPERS_H_
+ #+END_SRC
+
+** Simple module code
+
+All the blocks in this section should tangle to your module file.
+
+These are the minimal headers you need.
+
+#+BEGIN_SRC c :tangle simple-mod.c
+#include "emacs-module.h"
+#include "emacs-module-helpers.h"
+
+#+END_SRC
+
+Every module must declare this symbol or Emacs will not load them.
+
+#+BEGIN_SRC c :tangle simple-mod.c
+int plugin_is_GPL_compatible;
+
+#+END_SRC
+
+Every function you want to define in Emacs will look something like this. Say you want to define a function that takes a single argument (x) that is an integer and multiplies it by 2 and returns an integer.
+
+#+BEGIN_SRC c :tangle simple-mod.c
+static emacs_value Ffunc (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  int x = extract_integer(env, args[0]);
+  return env->make_integer(env, x * 2);
+}
+
+#+END_SRC
+
+*** A function with one optional argument
+
+This function will have the signature: (simple-1opt A & optional B) and it will return (int) (A * B), where B is optional and will have a default value of 1. We initialize B to the default value, check how many args were passed, and if it is two, we know the second arg contains the optional argument.
+
+#+BEGIN_SRC c :tangle simple-mod.c
+static emacs_value Fsimple_1opt (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  int A = extract_integer(env, args[0]);
+  int B = 1;
+  if (nargs == 2)
+    {
+      B = extract_integer(env, args[1]);
+    }
+  return env->make_integer(env, A * B);
+}
+
+#+END_SRC
+
+*** A variadic function
+
+This simple function just calculates the sum of a bunch of integers and returns the sum.
+
+#+BEGIN_SRC c :tangle simple-mod.c
+static emacs_value Fsimple_intsum (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  int sum = 0;
+  int i;
+  for (i = 0; i < nargs; i++)
+    sum += extract_integer(env, args[i]);
+  return env->make_integer(env, sum);
+}
+
+#+END_SRC
+
+
+*** Initializing the module
+    
+Every module must define =emacs_module_init= to initialize the module. This is where you "declare" which functions are exposed to Emacs. The two c-functions for this are fset and defun.
+
+I recommend you put the intended signature of the function in the doc string of fset. It appears that Emacs does not know the signature otherwise. The defun function is better at this, but more limited in how easy it is to specify the body of the function.
+
+#+BEGIN_SRC c :tangle simple-mod.c
+
+
+int emacs_module_init(struct emacs_runtime *ert)
+{
+  emacs_env *env = ert->get_environment(ert);
+
+  // This is a "private" function
+  fset(env,
+       "-simple-simple", Ffunc,
+       1, 1,
+       "(-simple-simple X)\n"			\
+       "Multiply X by 2.",
+       NULL);
+
+  // This is a "public" function that will have a good argument signature.
+  defun(env,
+	"simple-simple",  // the emacs name
+	make_emacs_list(env, 1, intern(env, "x")), // this makes (x)
+	"supercalifragilisticexpialidocious", // the docstring
+	// The next line makes (-simple-simple x) for the body
+	make_emacs_list(env, 2, intern(env, "-simple-simple"), intern(env, "x")));
+
+  // One required, one optional argument
+  fset(env,
+       "-simple-1opt", Fsimple_1opt,
+       1, // one required arg
+       2, // two max args, so one is optional
+       "(-simple-1opt A &optional B)",
+       NULL);
+
+  defun(env,
+	"simple-1opt",
+	make_emacs_list(env, 3,
+			intern(env, "A"),
+			intern(env, "&optional"),
+			intern(env, "B")),
+	"optional param",
+	make_emacs_list(env, 3,
+			intern(env, "-simple-1opt"),
+			intern(env, "A"),
+			// Note you have to handle the optional value here. It
+			// isn't pretty, and duplicates the value in the
+			// c-function. I don't see a better option though.
+			make_emacs_list(env, 3,
+					intern(env, "or"),
+					intern(env, "B"),
+					env->make_integer(env, 1))));
+
+  // 1 required argument and variadic
+  fset(env,
+       "simple-intsum", Fsimple_intsum,
+       1, -2,
+       "Simple variadic sum",
+       NULL);
+
+  defun(env,
+	"simple-intsum-d",
+	make_emacs_list(env, 2,			
+			intern(env, "&rest"),
+			intern(env, "x")),
+	"defun version of intsum",
+	// Note here we have to use apply to handle the variadic args
+	make_emacs_list(env,
+			3,
+			intern(env, "apply"),
+			make_emacs_list(env, 2,
+					intern(env, "quote"),
+					intern(env, "simple-intsum")),
+			intern(env, "x")));
+
+  // You might prefer this way to get an interactive function.
+  eval(env,
+       "(defun simple-intsum-d2 (&rest x)"			\
+       "(interactive \"nX: \")" \
+       "(apply 'simple-intsum x))");
+    
+  provide(env, "simple-mod");
+  
+ return 0;
+}
+
+/* This is normally the end of the file */
+#+END_SRC
+
+** Vector functions for linear algebra
+
+We need to get the shape of a vector
+
+
+#+BEGIN_SRC emacs-lisp
+(length [1 2 3])
+#+END_SRC
+
+#+RESULTS:
+: 3
+
+#+BEGIN_SRC emacs-lisp
+(length [[1 1][2 2]])
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+I seem to have lost a few nice functions that were recursive to compute a few things.
+
+** Makefile
+
+This makefile is explicit.
+
+#+BEGIN_SRC makefile :tangle Makefile
+LDFLAGS = -shared
+CFLAGS = -Wall -shared -fPIC 
+LIBS =  -L. -lemacs-module-helpers
+CC = gcc
+
+all: libemacs-module-helpers.so simple-mod.so  test-simple-mod
+
+clean:
+	rm *.c *.h *.o *.so tests.el
+
+##################
+# Module helpers #
+##################
+
+libemacs-module-helpers.so: emacs-module-helpers.o
+	$(CC) $(LDFLAGS)  -o libemacs-module-helpers.so emacs-module-helpers.o
+
+emacs-module-helpers.o: emacs-module-helpers.c emacs-module-helpers.h
+	$(CC) $(CFLAGS) -c emacs-module-helpers.c
+
+##############
+# Simple-Mod     #
+##############
+
+simple-mod.so: simple-mod.o libemacs-module-helpers.so
+	$(CC) $(LDFLAGS) $(LIBS)  -o simple-mod.so simple-mod.o
+
+simple-mod.o: simple-mod.c
+	$(CC)  $(CFLAGS) -c simple-mod.c
+
+test-simple-mod: simple-mod.so tests.el
+	emacs -batch -q -l tests.el -f ert-run-tests-batch-and-exit
+#+END_SRC
+
+** Test file
+   
+#+BEGIN_SRC emacs-lisp :tangle tests.el
+(add-to-list 'load-path (expand-file-name "."))
+
+(require 'cl)
+(require 'ert)
+(require 'simple-mod)
+
+(ert-deftest t1 ()
+  (should (= 2 (simple-simple 1))))
+
+
+(ert-deftest t2 ()
+  (should (= 2 (simple-simple 1.0))))
+
+
+(ert-deftest t3 ()
+  "This fails maybe because it is a module?"
+  :expected-result :failed
+  (should-error (= 2 (simple-simple "1.0"))))
+
+;; This test just confirms that should-error works for regular functions
+(ert-deftest test-divide-by-zero ()
+  (should-error (/ 1 0)
+		:type 'arith-error))
+
+
+(ert-deftest test-1opt-1 ()
+  (should (= 2 (simple-1opt 2))))
+
+(ert-deftest test-1opt-2 ()
+  (should (= 4 (simple-1opt 2 2))))
+
+(ert-deftest test-intsum-1 ()
+  (should (= 1 (simple-intsum 1))))
+
+(ert-deftest test-intsum-2 ()
+  (should (= 2 (simple-intsum 1 1))))
+
+(ert-deftest test-intsum-3 ()
+  (should (= 4 (simple-intsum 1 1 2))))
+
+(ert-deftest test-intsum-4 ()
+  (should (= 7 (simple-intsum 1 1 2 3))))
+
+(ert-deftest test-intsum-d1 ()
+  (should (= 7 (simple-intsum-d 1 1 2 3))))
+(ert-deftest test-intsum-d2 ()
+  (should (= 7 (simple-intsum-d2 1 1 2 3))))
+#+END_SRC
+
+** Local variables
+
+These local variables are read when the file is opened, establishing the hook that makes everything when you tangle.
+
+ # Local Variables:
+ # eval: (progn (org-babel-goto-named-src-block "my-hook-function") (org-babel-execute-src-block) (add-hook 'org-babel-post-tangle-hook 'my-special-hook))
+ # End:
