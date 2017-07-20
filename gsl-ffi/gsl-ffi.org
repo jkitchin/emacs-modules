@@ -1,0 +1,116 @@
+* Using emacs-ffi with the Gnu Scientific Library
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path (expand-file-name "."))
+(require 'ffi)
+
+(define-ffi-library gsl "libgsl")
+#+END_SRC
+
+#+RESULTS:
+: gsl
+
+** Simple functions
+
+#+BEGIN_SRC emacs-lisp
+
+(define-ffi-function gsl-sf-bessel-J0 "gsl_sf_bessel_J0"
+  (:double "Function value") 		;return value
+  ((:double x "x")) ; args
+  gsl
+  "Regular cylindrical Bessel function of zeroth order, J_0(x)")
+(gsl-sf-bessel-J0 5.0)
+#+END_SRC
+
+#+RESULTS:
+: -0.17759677131433826
+
+#+BEGIN_SRC emacs-lisp
+(describe-function 'gsl-sf-bessel-J0)
+#+END_SRC
+
+#+RESULTS:
+#+begin_example
+gsl-sf-bessel-J0 is a Lisp function.
+
+(gsl-sf-bessel-J0 X)
+
+For more information check the manuals.
+
+Regular cylindrical Bessel function of zeroth order, J_0(x)
+
+X (:double) x
+
+Returns: Function value (:double)
+#+end_example
+
+** Integration function
+
+#+BEGIN_SRC emacs-lisp
+(define-ffi-function gsl-integration-workspace-alloc "gsl_integration_workspace_alloc"
+  (:pointer "gsl_integration_workspace")
+  ((:size_t n))
+  gsl
+  "This function allocates a workspace sufficient to hold n
+double precision intervals, their integration results and error
+estimates. One workspace may be used multiple times as all
+necessary reinitialization is performed automatically by the
+integration routines.")
+
+(define-ffi-function gsl-integration-workspace-free "gsl_integration_workspace_free"
+  (:void)
+  ((:pointer *w "gsl_integration_workspace"))
+  gsl
+  "This function frees the memory associated with the workspace w.")
+
+(define-ffi-function gsl-integration-qags "gsl_integration_qags"
+  (:int "Integral result")
+  ((:pointer *f "gsl_function")
+   (:double a) (:double b)
+   (:double epsabs) (:double epsrel)
+   (:size_t limit) (:pointer *w "gsl-integration-workspace")
+   (:pointer *result "double") (:pointer *abserr "double"))
+  gsl
+  "This function applies the Gauss-Kronrod 21-point integration
+rule adaptively until an estimate of the integral of f over (a,b)
+is achieved within the desired absolute and relative error
+limits, epsabs and epsrel. The results are extrapolated using the
+epsilon-algorithm, which accelerates the convergence of the
+integral in the presence of discontinuities and integrable
+singularities. The function returns the final approximation from
+the extrapolation, result, and an estimate of the absolute error,
+abserr. The subintervals and their results are stored in the
+memory provided by workspace. The maximum number of subintervals
+is given by limit, which may not exceed the allocated size of the
+workspace.")
+
+(define-ffi-struct gsl_function (function :type :pointer) (params :type :pointer))
+
+#+END_SRC
+
+#+RESULTS:
+: gsl_function-params
+
+Here is a working example.
+
+#+BEGIN_SRC emacs-lisp :results value
+(defun ff (x params) (/ (log x) (sqrt x)))
+
+(let* ((*w (gsl-integration-workspace-alloc 1000))
+       (F (ffi--define-struct gsl_function))
+       (cif (ffi--prep-cif :double [:double :pointer]))
+       (*f (ffi-make-closure cif #'ff))
+       (a 0.0)
+       (b 1.0)
+       (epsabs 0.0)
+       (epsrel 1e-7)
+       (limit 1000)
+       (result (ffi-allocate :double))
+       (abserr (ffi-allocate :double)))
+  (setf (gsl_function-function F) *f)
+  (gsl-integration-qags F a b epsabs epsrel limit *w result abserr)
+  (ffi--mem-ref result :double))
+#+END_SRC
+
+#+RESULTS:
+: -4.000000000000085
