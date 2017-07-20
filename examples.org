@@ -6,6 +6,7 @@
   :updated:  2017/07/11 10:27:13
   :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules.org
   :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/index.html
+  :ID:       BEAB5896-BE68-4C32-B049-CE7DD5506922
   :END:
 
 The goal of this post is to be able to solve equations like this one:
