@@ -63,7 +63,7 @@ This simple example in C  http://diobla.info/blog-archive/modules-tut.html
 - [[https://github.com/syohex/emacs-lua][emacs-lua]] ::  Lua engine from Emacs Lisp
 - [[https://github.com/syohex/emacs-zstd][emacs-ztd]] :: libzstd binding of Emacs Lisp
 - [[https://github.com/syohex/emacs-memcached][mem-cached]] :: libmemcached
-- https://coldnew.github.io/2d16cc25/ :: in Japanese, but with code
+- https://coldnew.github.io/2d16cc25/ :: in Chinese, but with code
      
 A collection of module resources: https://github.com/emacs-pe/emacs-modules
 - Nim https://github.com/yuutayamada/nim-emacs-module
