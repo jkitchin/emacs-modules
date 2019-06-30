@@ -336,3 +336,431 @@ gcc  -shared -L/usr/local/include -lgsl -o mod-vector.so mod-vector.o
 
 #+RESULTS:
 : nil
+* DONE Linear algebra in Emacs using MKL and dynamic modules
+  CLOSED: [2017-07-21 Fri 15:48]
+  :PROPERTIES:
+  :categories: emacs,dynamic-module
+  :CUSTOM_ID: mkl
+  :date:     2017/07/21 15:48:05
+  :updated:  2017/07/21 15:48:05
+  :org-url:  http://kitchingroup.cheme.cmu.edu/org/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules.org
+  :permalink: http://kitchingroup.cheme.cmu.edu/blog/2017/07/21/Linear-algebra-in-Emacs-using-MKL-and-dynamic-modules/index.html
+  :ID:       6AD22605-9C9A-41AA-B162-6E6A650D9201
+  :END:
+
+In a [[http://kitchingroup.cheme.cmu.edu/blog/2017/07/11/Adding-linear-algebra-to-Emacs-with-the-GSL-and-dynamic-modules/][previous post]] I integrated some linear algebra into Emacs using the GNU Scientific library and a dynamic module. In this post, I use a similar approach that uses the Intel MKL library in conjunction with some helper elisp functions to mimic the array broadcasting features in Numpy. I thought this might be easier and lead to at least a complementary set of functionalities.
+
+Note: I had to follow the directions [[http://osxdaily.com/2015/10/05/disable-rootless-system-integrity-protection-mac-os-x][here]] to disable some security feature on my Mac so that it would use the MKL libraries. Thanks Apple.
+
+It is convenient to use vectors for the representation of arrays in Emacs because there are nice functions in the emacs-module.h for accessing vector properties. Also vectors sound closer to an array than a list. So what about array broadcasting, e.g. the way numpy lets you multiply a 2d array with a 1d array? If you multiply two arrays with size (m1, n1) * (m2, n2), it is required that the number of columns in the first array (n1) be equal to the number of rows in the second one (m2), and the resulting size of the array product will be (m1, n2). What should happen though when we have 1d array? This is neither a row or column vector itself, but we can treat as either one if we choose too. For example the vector [1 2 3] can be thought of as an array with the shape (1, 3), e.g. a single row with three columns, or (3, 1), i.e. three rows in a single column. We will build this capability into the module for convenience.
+
+I still find it moderately tedious to write c functions that take emacs arguments, transform them to c arguments, do some c computations, and convert the results back to emacs values. So, we only implement one c function for this that multiplies two 2d arrays together using the cblas_dgemm routine in the MKL library. Then, we will create a complementary elisp library that will provide some additional functionality to get the shapes of vector arrays, dimensions, and allow us to multiply 1d and 2d vectors together the same way Numpy does array broadcasting.
+
+The dynamic module code is listed in [[id:45D04B39-1927-44ED-9402-E89D166AE8C8][The module code]]. The elisp code is listed in [[id:F5AEAF4E-317F-48D4-9815-8EB0331AF0E5][Elisp helper functions]].  In the following sections we just demonstrate how to use the results.
+
+** Convenience functions to get array properties
+
+I found it convenient to do array shape and dimension analysis in elisp before sending arrays to the dynamic module. The shape of an array is just the number of elements in each dimension. Here we look at a 2\times 3 array.
+
+#+BEGIN_SRC emacs-lisp
+(vector-shape [[1 2 3]
+	       [3 4 5]])
+#+END_SRC
+
+#+RESULTS:
+: [2 3]
+
+You see it returns a vector showing two rows and three columns. There are two convenience commands to get the number of rows (vector-nrows) and columns (vector-ncols). Here is one of them.
+
+#+BEGIN_SRC emacs-lisp
+(vector-ncols [[1 2 3]
+	       [3 4 5]])
+#+END_SRC
+
+#+RESULTS:
+: 3
+
+
+** Matrix multiplication
+
+The main problem we want to calculate is the matrix multiplication $A\cdotB$ where $A$ and $B$ are either 1d vectors or 2d arrays. Here we examine several representative cases of matrix multiplication.
+
+*** 1d * 1d
+
+This is a simple dot-product that is actually calculated in elisp.
+
+$[1 1 1] \cdot [2 2 2] = 6$
+
+#+BEGIN_SRC emacs-lisp
+(matrix-multiply [1 1 1] [2 2 2])
+#+END_SRC
+
+#+RESULTS:
+: 6.0
+
+✓
+
+Note we get a float. That is because we initialize the sum with 0.0 to be consistent with all the other cases which are done with floats. dgemm is a double routine in MKL, which means it should return floats. Internally in the module, we cast all numbers as doubles for the multiplication.
+
+*** 2d * 1d
+    
+This is a matrix multiplication that is typically like $A b$ where $b$ is a column vector. We return a 1d array as a result, rather than a 2d array of nrows and 1 column.
+
+\[ \left[\begin{array}{cc}
+1 & 2 \\
+3 & 4 \end{array}\right] 
+\left [ \begin{array}{c}
+1 \\ 1 \end{array}\right] = \left[\begin{array}{c}3\\7\end{array}\right]\]
+
+#+BEGIN_SRC emacs-lisp
+(let ((A [[1 2]
+	  [3 4]])
+      (b [1 1]))
+  (matrix-multiply  A b))
+#+END_SRC
+
+#+RESULTS:
+: [3.0 7.0]
+
+✓
+
+*** 1d * 2d
+
+This case is $b A$ where $b$ is a row vector. For example:
+
+\[\left[\begin{array}{cc}1 & 1\end{array}\right]
+\left[\begin{array}{cc} 1 & 2\\ 3 & 4\end{array}\right] = \left[\begin{array}{cc} 4 & 6 \end{array}\right ]\]
+
+#+BEGIN_SRC emacs-lisp
+(matrix-multiply [1 1]
+		 [[1 2]
+		  [3 4]])
+#+END_SRC
+
+#+RESULTS:
+: [4.0 6.0]
+
+✓
+
+As with the previous case, we return a 1d vector result rather than a 2d array with 1 row and ncolumns.
+
+*** 2d * 2d
+  
+Finally we have the case of $A B$. The number of columns in A must be the same as the number of rows in B, and the result has a size that is the number of rows in A and the number of columns in B. Here is one [[http://www.sosmath.com/matrix/matrix1/matrix1.html][example]]:
+
+\[\left[\begin{array}{cc} 0 & 1\\ 0 & 0\end{array}\right]  
+\left[\begin{array}{cc} 0 & 0\\ 1 & 0\end{array}\right]  
+= \left[\begin{array}{cc} 1 & 0\\ 0 & 0\end{array}\right]  \]
+
+#+BEGIN_SRC emacs-lisp
+(matrix-multiply [[0 1]
+		  [0 0]]
+		 [[0 0]
+		  [1 0]])
+#+END_SRC
+
+#+RESULTS:
+: [[1.0 0.0] [0.0 0.0]]
+
+✓
+
+This example is adapted from [[https://stackoverflow.com/questions/21547462/how-to-multiply-2-dimensional-arrays-matrix-multiplication][here]]. The correct answer is at the bottom of that page, and shown here.
+
+\[\left[\begin{array}{cccc} 1 & 2 & -2 & 0 \\ -3 & 4 & 7 & 2 \\ 6 & 0 & 3 & 1\end{array}\right]  
+\left[\begin{array}{cc} -1 & 3 \\ 0 & 9 \\ 1 & -11 \\ 4 & -5 \end{array}\right]
+= \left[\begin{array}{cc} -3 & 43 \\ 18 & -60 \\ 4 & -5\end{array}\right]    \]
+
+For readability we use temporary variables here, and pretty-print the result.
+
+#+BEGIN_SRC emacs-lisp
+(let ((A [[1 2 -2 0]
+	  [-3 4 7 2]
+	  [6 0 3 1]])
+      (B [[-1 3]
+	  [0  9]
+	  [1 -11]
+	  [4 -5]]))
+  (pp (matrix-multiply A B)))
+#+END_SRC
+
+#+RESULTS:
+: [[-3.0 43.0]
+:  [18.0 -60.0]
+:  [1.0 -20.0]]
+
+✓
+
+So, all these example work as we expect. The elisp function for matrix-multiply does a lot of work for you to make these cases work, including error checking for dimensional consistency.
+
+** Summary thoughts
+   
+It was not any easier to write this dynamic module than the previous one I used with the Gnu Scientific Library. The approach and code are remarkably similar. In one way the GSL was easier to use; it worked out of the box, whereas I had to fiddle with a security option in my OS to get it to run MKL! My  Anaconda Python distribution must get around that somehow since it ships with an MKL compiled Numpy and scipy.
+
+The idea of using elisp for analysis of the inputs and making sure they are correct is a good one and helps prevent segfaults. Of course it is a good idea to write defensive c-code to avoid that too. Overall, this is another good example of expanding the capabilities of Emacs with a dynamic module.
+
+** The module code
+   :PROPERTIES:
+   :ID:       45D04B39-1927-44ED-9402-E89D166AE8C8
+   :END:
+
+The c-code is loosely adapted from https://software.intel.com/en-us/node/529735. We do not implement the full dgemm behavior which is able to calculate $C = \alpha A * B + \beta*C$. We set \alpha=1, and \beta=0 in this example. We should do some dimension checking here, but it is easier to do it in emacs in a helper function. As long as you use the helper function there should not be an issue, but it is possible to segfault Emacs if you use the module function incorrectly.
+
+#+BEGIN_SRC c :tangle mkl.c
+#include "emacs-module.h"
+#include "emacs-module-helpers.h"
+#include <mkl.h>
+
+int plugin_is_GPL_compatible;
+
+emacs_value Fmkl_dgemm (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+{
+  double *A, *B, *C;
+  int m, n, k, i, j;
+  double alpha = 1.0;
+  double beta = 0.0;
+  
+  // These will be 2d vectors
+  emacs_value M0 = args[0]; // array 1 - A (m x k)
+  emacs_value M1 = args[1]; // array 2 - B (k x n)
+
+  // I need to get the number of rows and columns of each one.
+  m = env->vec_size(env, M0);
+  k  = 0;
+  // We assume that we have a 2d array.
+  emacs_value el1 = env->vec_get (env, M0, 0);
+  k = env->vec_size(env, el1);
+  
+  // Now we know A has dimensions (m, k)
+ 
+  emacs_value el2 = env->vec_get (env, M1, 0);
+  n = env->vec_size(env, el2);
+  
+  // Now we know M1 had dimensions (k, n)
+  
+  // Now we have to build up arrays.
+  // We are looking at a * b = c
+  A = (double *)mkl_malloc( m*k*sizeof( double ), 64 );
+  B = (double *)mkl_malloc( k*n*sizeof( double ), 64 );
+  C = (double *)mkl_malloc( m*n*sizeof( double ), 64 );
+  if (A == NULL || B == NULL || C == NULL) {
+    printf( "\n ERROR: Can't allocate memory for matrices. Aborting... \n\n");
+    mkl_free(A);
+    mkl_free(B);
+    mkl_free(C);
+    return 1;
+  }
+
+  //populate A
+  emacs_value row, ij;
+  for (int i = 0; i < m; i++)
+    {
+      row = env->vec_get(env, M0, i);
+      for (int j = 0; j < k; j++)
+  	{
+  	  // get M0[i, j]
+  	  ij = env->vec_get(env, row, j);
+  	  A[k * i + j] = extract_double(env, ij);
+  	}
+    }
+
+  // populate B
+  for (int i = 0; i < k; i++)
+    {
+      row = env->vec_get(env, M1, i);
+      for (int j = 0; j < n; j++)
+  	{	  
+  	  // get M0[i, j]
+  	  ij = env->vec_get(env, row, j);
+  	  B[n * i + j] = extract_double(env, ij);
+  	}
+    }
+
+  // initialize C.  The solution will have dimensions of (rows1, cols2).
+  for (int i = 0; i < m; i++)
+    {
+      for (int j = 0; j < n; j++)
+  	{
+  	  C[n * i + j] = 0.0;
+  	}
+    }
+
+  // the multiplication is done here.
+  cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 
+                m, n, k, alpha, A, k, B, n, beta, C, n);
+
+  // now we build up the vector to return
+  emacs_value vector = env->intern(env, "vector");
+  emacs_value *array = malloc(sizeof(emacs_value) * m);
+  emacs_value *row1;
+  emacs_value vec;
+  for (int i = 0; i < m; i++)
+    {
+      row1 = malloc(sizeof(emacs_value) * n);
+      for (int j = 0; j < n; j++)
+  	{
+  	  row1[j] = env->make_float(env, C[j + i * n]);
+  	}
+      vec = env->funcall(env, vector, n, row1);
+      array[i] = vec;
+      free(row1);
+    }
+
+  emacs_value result = env->funcall(env, vector, m, array);
+  free(array);
+  return result;
+}
+
+
+int emacs_module_init(struct emacs_runtime *ert)
+{
+  emacs_env *env = ert->get_environment(ert);
+  
+  DEFUN("mkl-dgemm", Fmkl_dgemm, 2, 2,
+	"(mkl-dgemm A B)\n"\
+	"Multiply the matrices A and B. A and B must both be 2d vectors.\n" \
+	"Returns the product as a vector.",
+	NULL);
+  provide(env, "mkl");
+  
+  return 0;
+}
+
+#+END_SRC
+
+To build this we have to run elisp:org-babel-tangle to generate the mkl.c file, and then run this shell block to compile it.
+
+#+BEGIN_SRC sh
+sh /opt/intel/mkl/bin/mklvars.sh intel64
+gcc -Wall -m64 -I${MKLROOT}/include -fPIC -c mkl.c
+gcc -shared -L${MKLROOT}/lib -Wl,-rpath,${MKLROOT}/lib -lmkl_rt -lpthread -lm -ldl -L. -lemacs-module-helpers -o mkl.so mkl.o
+#+END_SRC
+
+#+RESULTS:
+
+
+** Elisp helper functions
+   :PROPERTIES:
+   :ID:       F5AEAF4E-317F-48D4-9815-8EB0331AF0E5
+   :END:
+   
+We will often want to know the shape of our arrays. The shape is how many elements there are in each dimension. Here we define a recursive function that gets the shape of arbitrarily nested vectors and returns a vector of the shape. We define some helper functions to get the number of dimensions, elements, rows and columns.
+
+The main function is a helper elisp function that multiplies two arrays. The function analyzes the shapes and transforms 1d vectors into the right 2d shape to multiply them together, and then returns the shape that makes sense. The c-code is not very robust to mistakes in the array dimensions. It tends to make emacs segfault if you get it wrong. So we try to avoid that if possible.
+
+We have four cases to consider for multiplication:
+
+- 2d * 2d :: (assert (= m1 n2)) return (n1, m2)
+- 1d * 2d :: 1d is a row vector (1, n1) (assert (= n1 m2)) return vector with n2 elements
+- 2d * 1d :: 1d is a column vector (m2, 1) (assert (= n1 m2)) return vector with m2 elements
+- 1d * 1d :: (assert (= (length m1) (length m2)) return a scalar
+
+Here is the 
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path (expand-file-name "."))
+(require 'mkl)
+(require 'cl)
+(require 'seq)
+
+(defun vector-shape (vec)
+  "Return a vector of the shape of VEC."
+  (let ((shape (vector (length vec))))
+    (if (vectorp (aref vec 0))
+	(vconcat shape (vector-shape (aref vec 0)))
+      shape)))
+
+(defun vector-ndims (vec)
+  "Returns the number of dimensions in VEC."
+  (length (vector-shape vec)))
+
+
+(defun vector-numel (vec)
+  "Returns the number of elements in VEC."
+  (if (> (length vec) 0)
+      (seq-reduce '* (vector-shape vec) 1)
+    0))
+
+
+(defun vector-nrows (vec)
+ "Return the number of rows in VEC."
+ (aref (vector-shape vec) 0))
+
+
+(defun vector-ncols (vec)
+ "Return the number of columns in VEC."
+ (aref (vector-shape vec) 1))
+
+
+(defun matrix-multiply (A B)
+  "Return A * B in the matrix multiply sense."
+  (cond
+   ;; 1d * 1d i.e. a dot-product
+   ((and (= 1 (vector-ndims A))
+	 (= 1 (vector-ndims B))
+	 (= (length A) (length B)))
+    ;; this is easy to compute so we don't use dgemm.
+    (seq-reduce '+ (mapcar* (lambda (a b) (* a b)) A B) 0.0))
+
+   ;; 2d * 1d (m1, n1) * (n2, 1)
+   ((and (= 2 (vector-ndims A))
+	 (= 1 (vector-ndims B))
+	 ;; ncols-A = len-B
+	 (= (vector-ncols A) (length B)))
+    ;; transform B into a 2d column vector
+    (let* ((B2d (apply 'vector (mapcar 'vector B)))
+	   (result  (mkl-dgemm A B2d)))
+      ;; Now call (dgemm A B2d) -> (m2, 1) column vector
+      ;; and convert it back to a 1d result
+      (cl-map 'vector (lambda (v) (aref v 0)) result)))
+
+   ;; 1d * 2d (1, n1) * (m2, n2) len-A = nrows-B
+   ((and (= 1 (vector-ndims A))
+	 (= 2 (vector-ndims B))
+	 (= (length A) (vector-nrows B)))
+    ;; transform B into a 2d row vector
+    (let* ((A2d (vector A))
+	   (result  (mkl-dgemm A2d B)))
+      ;; should be a 2d row vector
+      (aref result 0)))
+
+   ;; 2d * 2d (m1, n1) * (m2, n2) rows-A = ncols-B
+   ((and (= 2 (vector-ndims A))
+	 (= 2 (vector-ndims B))
+	 (= (vector-ncols A)
+	    (vector-nrows B)))
+    ;; call (dgemm A B) and return result
+    (mkl-dgemm A B))
+   (t
+    ;; Error checking, getting here means none of the cases above were caught.
+    ;; something is probably wrong.
+    (cond
+     ((or (> (vector-ndims A) 2)
+	  (> (vector-ndims B) 2))
+      (error "One of your arrays has more than 2 dimensions. Only 1 or 2d arrays are supported"))
+     ((and (= 1 (vector-ndims A))
+	   (= 1 (vector-ndims B))
+	   (not (= (length A) (length B))))
+      (error "A and B must be the same length.
+len(A) = %d
+len(B) = %d" (length A) (length B)))
+     ((and
+       (= (vector-ndims A) 2)
+       (= (vector-ndims B) 2)
+       (not (= (vector-nrows A) (vector-ncols B))))
+      (error "Your array shapes are not correct.
+The number of rows in array A must equal the number of columns in array B.
+There are %d rows in A and %d columns in B" (vector-nrows A) (vector-ncols B)))
+     ((and
+       (= (vector-ndims A) 2)
+       (= (vector-ndims B) 1)
+       (not (= (vector-nrows A) (length B))))
+      (error "Your array shapes are not correct.
+The number of rows in array A must equal the number of columns in array B.
+There are %d rows in A and %d columns in B" (vector-nrows A) (length B)))
+     (t
+      (error "Unknown error"))))))
+#+END_SRC
+
+#+RESULTS:
+: matrix-multiply
+

@@ -24,6 +24,23 @@
 	   [1031 1032]])))
 
 
+(defun test-mkl ()
+  (let ((process-environment )))
+  (add-to-list 'process-environment "LD_LIBRARY_PATH=/opt/intel/compilers_and_libraries_2017.4.181/mac/mkl/lib")
+  
+  (add-to-list 'process-environment  "DYLD_LIBRARY_PATH=/opt/intel/compilers_and_libraries_2017.4.181/mac/tbb/lib:/opt/intel/compilers_and_libraries_2017.4.181/mac/compiler/lib:/opt/intel/compilers_and_libraries_2017.4.181/mac/mkl/lib")
+  (require 'mod-mkl)
+
+  (print (getenv "LD_LIBRARY_PATH"))
+  
+  (print (mkl-dgemm
+	  [[0.11 0.12 0.13]
+	   [0.21 0.22 0.23]]
+	  [[1011 1012]
+	   [1021 1022]
+	   [1031 1032]])))
+
+
 (defun test-constants ()
   (require 'gsl-constants)
   (print GSL-CONST-MKSA-PLANCKS-CONSTANT-H)
