@@ -11,30 +11,103 @@ This repo mostly contains proofs of concept so many of these may contain only a 
 
 
 ** The GNU Scientific library
+
 - [[./gsl-constants.c]] shows how to expose constants to Emacs
 - [[./gsl-linalg.c]] shows how to deal with arrays and return a vector.
 - [[./gsl-integration.c]] shows how to integrate a function. It is a little improved over the [[http://kitchingroup.cheme.cmu.edu/blog/2017/07/09/Adding-a-GSL-integration-function-to-Emacs-with-a-dynamic-module/][blogpost]].
 - [[./gsl-roots.c]] is similar to the integration library but implements a root finder
 
+** Zeromq
+
+   [[./zeromq/]] There are two sets of bindings to Zeromq, one is a dynamic module, and one uses emacs-ffi.  The ffi was much easier to write, but I anticipate trouble with special types down the road.
+
+** MongoDB
+
+   [[./mongodb/]] Here I explored an emacs-ffi approach. I ran into trouble dealing with the custom struct types.
+
+I think that a full dynamic module might be required to support this.
+
+** postgres
+
+https://github.com/anse1/emacs-libpq An Emacs 25 module for accessing PostgreSQL via the libpq client library.
+
+
 ** Miscellaneous
- 
+
 - [[./mod-types.c]] shows how to test the type of an arg, and how to get a function to work for integers and floats. Also this has a little variadic function definition.
 - [[./mod-list-vec.c]] contains some test functions for making vectors and indexing them.
 - [[./emacs-module-helpers.c]] provides convenience functions like provide and DEFUN.
 
 * Notes to me
+** Simplifying writing modules
+
+There are so many things that require boilerplate code. I started [[./emacs-module-helpers.c]] to help with this.
+
+- extract_double/int from an Emacs arg
+- defconst/i Define a float/integer constant from a #define in a header
+- DEFUN macro to simplify declaring functions to emacs
+- provide function
+
+TODO: There should a MACRO for the emacs_value standard functions to send stuff back to Emacs if that is feasible. Maybe something like
+
+CDEFUN fname {}
+
+Not sure that is feasible though.
+
+** General design principles
+
+I have used two designs so far.
+
+*** the standard c to emacs design
+The one I use the most returns an emacs value to the emacs environment. These functions have this signature
+
+#+BEGIN_SRC c
+static emacs_value Fname (emacs_env *env, ptrdiff_t nargs, emacs_value args[], void *data)
+#+END_SRC
+
+In this, nargs is an integer of how many arguments were passed from Emacs. The args argument is an array of emacs_value types sent from Emacs. The best I can tell you can use nargs to allow optional arguments. I don't know what *data is for yet.
+
+This function would be declared to Emacs with:
+
+#+BEGIN_SRC c
+DEFUN("emacs-func-name", Fname, minnargs, maxnargs,
+	docstring,
+	data_pointer);
+#+END_SRC
+
+If maxnargs is -2, the function is declared to be variadic.
+
+
+The second design I have used modifies the Emacs env by making funcalls to emacs commands.
+
+*** Modifying the Emacs env
+
+These functions are not registered, but are called in the emacs_init_module code to provide features, like this one:
+
+#+BEGIN_SRC c
+void provide (emacs_env *env, const char *feature)
+{
+  emacs_value Qfeat = env->intern (env, feature);
+  emacs_value Qprovide = env->intern (env, "provide");
+  emacs_value args[] = { Qfeat };
+
+  env->funcall (env, Qprovide, 1, args);
+}
+#+END_SRC
+
+Or to define constants. These functions also are used for binding functions to the environment also.
 
 ** testing modules
 
 It is moderately tedious to test modules because once you load them you cannot rebuild and reload them. You have to kill emacs and try again. Here is a pretty fast way to test modules. You develop in one emacs, and run the appropriate make command to build it.
 
-Add test functions to [[./tests.el]]. Then run them from the command line like this.
+Add test functions to [[./tests.el]]. Then run them from the command line like this. Right now most of these functions just test that no segfaults occur and that there is some output. It would be better to integrate ert-testing...
 
 #+BEGIN_SRC sh
 emacs -batch -q -l tests.el -f test-linalg
 #+END_SRC
 
-Or add lines like that one to the Makefile. 
+Or add lines like that one to the [[./Makefile]]
 
 * Resources on dynamic modules
 For my own notes here are all the resources on dynamic modules I know of:
@@ -64,7 +137,7 @@ This simple example in C  http://diobla.info/blog-archive/modules-tut.html
 - [[https://github.com/syohex/emacs-zstd][emacs-ztd]] :: libzstd binding of Emacs Lisp
 - [[https://github.com/syohex/emacs-memcached][mem-cached]] :: libmemcached
 - https://coldnew.github.io/2d16cc25/ :: in Japanese, but with code
-     
+
 A collection of module resources: https://github.com/emacs-pe/emacs-modules
 - Nim https://github.com/yuutayamada/nim-emacs-module
 - OCaml https://github.com/janestreet/ecaml
@@ -78,3 +151,92 @@ haskell https://github.com/knupfer/haskell-emacs
 
 
 
+* Top goals for this
+
+It seems like the path forward on this is probably to implement the C functions as close to the documentation as possible and then to create elisp wrappers that do resource management, e.g. freeing memory, destroying pointers, etc.
+
+This would enable me to use the DEFINE's most easily I think.
+
+The big downside of dynamic modules so far is how to get decent docstrings and signatures.
+
+** Zeromq
+
+[[./zeromq/]] [[./zeromq/zeromq.org]] - contains a dynamic module and an ffi implementation.
+
+** BSON/mongoc
+
+[[./mongodb/]]  ffi: [[./mongodb/mongo-ffi.org]] and [[./mongodb/bson.org]]
+
+My intuition is that a dynamic module is better than the ffi, at least until it is obvious how to handle custom data types and structs in the ffi.
+
+** sqlite3 and/or postgresql
+
+There is already one interface for this. I don't know how it maps to SQL queries, but it might enable cleaner integration to full-text search. If one was dreaming, there might also be an interface to something like ElasticSearch.
+
+** GNU Scientific Library
+   :PROPERTIES:
+   :ID:       E88713AA-1100-49CB-8E9E-4ED8C268BA3D
+   :END:
+
+Similar to the BSON/mongoc situation it seems likely that a full dynamic module is necessary here too because of ffi limitations on custom structs.
+
+I think getting a decent linear algebra capability with minimal broadcasting would be helpful. We can use vectors and have a generalized dot product.
+
+It might be best to see if I can wrap Numpy for this.
+
+#+BEGIN_SRC emacs-lisp
+(dot [1 2] [3 4]) 			; a scalar
+
+(dot [[1 1]
+      [2 2]]
+     [1 1]) 				; here b is implied as a column
+#+END_SRC
+
+
+It would be helpful to have a vector-1d-p function, and a vector size function. The vector size function should probably work recursively so you can pass an arbitrary shaped array in.
+
+#+BEGIN_SRC emacs-lisp
+(defun vector-shape (vec)
+  "Return a vector of the shape of a vector."
+  (let ((shape (vector (length vec))))
+    (if (vectorp (aref vec 0))
+	(vconcat shape (vector-shape (aref vec 0)))
+      shape)))
+
+(defun vector-ndims (vec)
+  "Returns the number of dimensions in a vector."
+  (length (vector-shape vec)))
+
+(defun vector-numel (vec)
+  "Returns the number of elements in a vector."
+  (if (> (length vec) 0)
+      (seq-reduce '* (vector-shape vec) 1)
+    0))
+
+(vector-shape [[[1 2][4 5]]])
+(vector-ndims [])
+(vector-numel [[1 2][3 4]])
+
+#+END_SRC
+
+#+RESULTS:
+: 4
+
+Broadcasting rules.
+
+See [[id:BEAB5896-BE68-4C32-B049-CE7DD5506922][Adding linear algebra to Emacs with the GSL and dynamic modules]]
+
+** (dot 1d 1d)
+
+The lengths of the vectors must be the same. Then, we have to make 2d arrays
+
+(rows, cols)
+(1, m1) and (m2, 1) for the standard matrix multiplication codes.
+
+** (dot 2d 1d)
+
+Assuming the 2d matrix has the shape (m1, n1), then the 1d must have n1 elements, and be converted to a (n1, 1) shape array.
+
+** (dot 1d 2d)
+
+Assuming the 2d matrix has the shape (m1, n1) then the 1d must have m1 elements and we have to make a (1, m1) array out of it for the multiplication.
